@@ -1,0 +1,14 @@
+# TLS 私钥与证书（本地自签，含内网 IP，勿入库）
+server/key.pem
+server/cert.pem
+*.pem
+
+# macOS
+.DS_Store
+
+# Claude Code 本地配置（命令白名单，机器相关）
+.claude/settings.local.json
+
+# 拉取的外部源码副本
+sglang_*.py
+ntr.py

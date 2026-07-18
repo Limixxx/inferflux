@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; base-uri 'self'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>InferFlux — 输出吞吐计算器</title>
+<style>
+:root{
+  --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --border:#2d3646;
+  --text:#e6edf3; --muted:#8b98a9; --accent:#4ea1ff; --cyan:#39c5cf;
+  --green:#3fb950; --orange:#f0883e; --purple:#bc8cff; --red:#f85149;
+  --radius:10px;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);
+  font-family:-apple-system,"SF Pro","Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
+  font-size:13px;line-height:1.6;min-height:100vh;}
+header{display:flex;align-items:center;justify-content:space-between;
+  padding:12px 24px;border-bottom:1px solid var(--border);
+  background:var(--panel);position:sticky;top:0;z-index:10;}
+.site-title{font-size:15px;font-weight:700;}
+.site-title a{color:var(--muted);font-size:12px;font-weight:400;text-decoration:none;margin-left:10px;}
+.site-title a:hover{color:var(--accent);}
+.gh-link{display:inline-flex;align-items:center;color:var(--muted);transition:color .18s;}
+.gh-link:hover{color:var(--accent);}
+.layout{display:grid;grid-template-columns:340px 1fr;gap:0;height:calc(100vh - 45px);}
+.params{background:var(--panel);border-right:1px solid var(--border);
+  overflow-y:auto;padding:16px;}
+.results{overflow-y:auto;padding:20px 24px;}
+h2{font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;
+  letter-spacing:.06em;margin:16px 0 8px;padding-bottom:4px;
+  border-bottom:1px solid var(--border);}
+h2:first-child{margin-top:0;}
+.row{display:flex;align-items:center;justify-content:space-between;
+  padding:4px 0;gap:8px;}
+.row label{color:var(--muted);font-size:12px;white-space:nowrap;flex-shrink:0;min-width:120px;}
+.row input,.row select{background:var(--panel2);border:1px solid var(--border);
+  border-radius:5px;padding:3px 7px;color:var(--text);font-size:12px;width:100%;max-width:160px;}
+.row input:focus,.row select:focus{outline:none;border-color:var(--accent);}
+.hint{font-size:11px;color:var(--muted);margin-top:2px;margin-left:128px;}
+.section{background:var(--panel);border:1px solid var(--border);
+  border-radius:var(--radius);padding:16px 20px;margin-bottom:14px;}
+.section h3{font-size:13px;font-weight:600;margin-bottom:12px;color:var(--text);}
+.metric{display:flex;align-items:baseline;justify-content:space-between;
+  padding:6px 0;border-bottom:1px dashed var(--border);}
+.metric:last-child{border-bottom:none;}
+.metric .k{color:var(--muted);font-size:12px;}
+.metric .v{font-size:16px;font-weight:700;font-variant-numeric:tabular-nums;}
+.metric .v.big{font-size:22px;}
+.metric .v small{font-size:11px;font-weight:400;color:var(--muted);margin-left:4px;}
+.v.accent{color:var(--accent);} .v.green{color:var(--green);}
+.v.orange{color:var(--orange);} .v.purple{color:var(--purple);} .v.red{color:var(--red);}
+.bd{font-size:11px;color:var(--muted);margin-top:8px;line-height:1.7;}
+.bd code{background:var(--panel2);padding:1px 5px;border-radius:4px;color:var(--cyan);}
+.warn{color:var(--red);} .ok{color:var(--green);}
+.note{font-size:11px;color:var(--muted);margin-top:10px;padding:10px;
+  background:var(--panel2);border-radius:6px;line-height:1.7;}
+.divider{height:1px;background:var(--border);margin:10px 0;}
+</style>
+</head>
+<body>
+<header>
+  <div class="site-title">
+    输出吞吐计算器
+    <a href="index.html">← 首页</a>
+    <a href="calc-input.html">输入吞吐计算器</a>
+    <a href="pd-disagg.html">PD 分离模拟器</a>
+  </div>
+  <a class="gh-link" href="https://github.com/Abatom/inferflux" target="_blank" rel="noopener" aria-label="GitHub">
+    <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"></path></svg>
+  </a>
+</header>
+<div class="layout">
+<!-- ═══ LEFT: PARAMS ═══ -->
+<aside class="params">
+  <h2 id="h-hw">硬件</h2>
+  <div class="row"><label id="l-gpu">GPU 型号</label>
+    <select id="gpu"></select></div>
+  <div class="row"><label id="l-tp">张量并行 TP</label>
+    <select id="tp"><option>1</option><option>2</option><option>4</option><option>8</option><option>16</option></select></div>
+  <div class="row"><label id="l-dp">数据并行 DP</label>
+    <select id="dp"><option>1</option><option>2</option><option>4</option><option>8</option></select></div>
+  <div class="row"><label id="l-ep">专家并行 EP</label>
+    <input id="ep" type="number" min="1" value="1"></div>
+  <div class="hint" id="hint-ep">EP 只影响显存（不进带宽公式）</div>
+  <div class="row"><label id="l-numD">Decode 实例数</label>
+    <input id="numD" type="number" min="1" value="1"></div>
+
+  <h2 id="h-model">模型</h2>
+  <div class="row"><label id="l-model">模型预设</label>
+    <select id="model"></select></div>
+  <div class="row"><label id="l-mbu">MBU</label>
+    <input id="mbu" type="number" min="0.05" max="1" step="0.01" value="0.8"></div>
+  <div class="hint" id="hint-mbu">显存带宽利用率，decode 典型 0.6～0.9</div>
+  <div class="row"><label id="l-mfu">MFU（算力上限）</label>
+    <input id="mfu" type="number" min="0.05" max="1" step="0.01" value="0.4"></div>
+  <div class="hint" id="hint-mfu">仅在 verify 算力打满时生效（大 batch/长 ctx/大 k）</div>
+
+  <h2 id="h-workload">负载</h2>
+  <div class="row"><label id="l-inputLen">输入长度 (token)</label>
+    <input id="inputLen" type="number" min="1" value="4096"></div>
+  <div class="row"><label id="l-outputLen">输出长度 (token)</label>
+    <input id="outputLen" type="number" min="1" value="512"></div>
+  <div class="hint" id="hint-outputLen">用于估 decode 期间平均 KV 长度</div>
+  <div class="row"><label id="l-batch">Decode 批大小 B</label>
+    <input id="batch" type="number" min="1" value="64"></div>
+  <div class="hint" id="hint-batch">单 decode 实例并发 running 请求数（每实例）</div>
+  <div class="row"><label id="l-kvFrac">KV 显存占比</label>
+    <input id="kvFrac" type="number" min="0.1" max="0.99" step="0.01" value="0.8"></div>
+  <div class="hint" id="hint-kvFrac">如 0.8 = 80% HBM 给 KV，其余给权重+激活</div>
+
+  <h2 id="h-mtp">MTP / 投机解码</h2>
+  <div class="row"><label id="l-mtpK">MTP 草稿数 k</label>
+    <input id="mtpK" type="number" min="0" max="8" step="1" value="0"></div>
+  <div class="hint" id="hint-mtpK">每步额外预测的 token 数；0=关（纯逐 token decode）</div>
+  <div class="row"><label id="l-acceptRate">草稿接受率 α</label>
+    <input id="acceptRate" type="number" min="0" max="1" step="0.01" value="0.85"></div>
+  <div class="hint" id="hint-accept">每个草稿 token 被接受的概率，典型 0.7～0.9</div>
+  <div class="row"><label id="l-acceptLenObs">实测 acceptLen（可选）</label>
+    <input id="acceptLenObs" type="number" min="1" step="0.01" placeholder="留空则由 α 推" value=""></div>
+  <div class="hint" id="hint-acceptlen">填了则直接用，绕开几何链假设</div>
+
+  <h2 id="h-backsolve">MBU 反推（可选）</h2>
+  <div class="row"><label id="l-obsTpot">实测 TPOT (ms)</label>
+    <input id="obsTpot" type="number" min="0" placeholder="留空则不反推" value=""></div>
+  <div class="hint" id="hint-obs">填入实测每 token 延时反推实际 MBU</div>
+  <div class="row"><label id="l-obsOut">实测输出吞吐 tok/s</label>
+    <input id="obsOut" type="number" min="0" placeholder="留空则不反推" value=""></div>
+  <div class="hint" id="hint-obsout">全系统口径（含 numD×DP）；由吞吐反推 MBU</div>
+</aside>
+<!-- ═══ RIGHT: RESULTS ═══ -->
+<section class="results">
+  <div class="section">
+    <h3 id="h-thput">吞吐与延时</h3>
+    <div class="metric"><span class="k" id="k-outThput">输出吞吐（全系统）</span>
+      <span class="v big accent" id="v-outThput">—</span></div>
+    <div class="metric"><span class="k" id="k-tpot">TPOT 每 token 延时（有效）</span>
+      <span class="v green" id="v-tpot">—</span></div>
+    <div class="metric"><span class="k" id="k-perInst">单实例输出吞吐</span>
+      <span class="v" id="v-perInst">—</span></div>
+    <div class="metric"><span class="k" id="k-stepMs">decode step 墙钟</span>
+      <span class="v" id="v-stepMs">—</span></div>
+    <div class="metric"><span class="k" id="k-concurrency">全系统并发（running 请求）</span>
+      <span class="v orange" id="v-concurrency">—</span></div>
+    <div class="bd" id="v-breakdown"></div>
+    <div class="bd" id="v-thput-note"></div>
+  </div>
+
+  <div class="section">
+    <h3 id="h-formula">TPOT / MBU 公式</h3>
+    <div class="bd" id="v-formula"></div>
+  </div>
+
+  <div class="section">
+    <h3 id="h-roofline">Decode roofline（权重 vs KV 瓶颈）</h3>
+    <div class="metric"><span class="k" id="k-wBytes">权重字节/步（全批摊薄）</span>
+      <span class="v" id="v-wBytes">—</span></div>
+    <div class="metric"><span class="k" id="k-kvBytes">批内 KV 字节/步</span>
+      <span class="v" id="v-kvBytes">—</span></div>
+    <div class="metric"><span class="k" id="k-knee">瓶颈拐点批大小 B*</span>
+      <span class="v orange" id="v-knee">—</span></div>
+    <div class="bd" id="v-rooflineNote"></div>
+  </div>
+
+  <div class="section">
+    <h3 id="h-mem">显存可行性</h3>
+    <div class="metric"><span class="k" id="k-kvBudget">KV 预算（每副本）</span>
+      <span class="v green" id="v-kvBudget">—</span></div>
+    <div class="metric"><span class="k" id="k-maxTok">KV 可容纳 token 数</span>
+      <span class="v" id="v-maxTok">—</span></div>
+    <div class="metric"><span class="k" id="k-maxBatch">最大可容批大小 B</span>
+      <span class="v" id="v-maxBatch">—</span></div>
+    <div class="metric"><span class="k" id="k-cellSize">KV cell size（每 token）</span>
+      <span class="v" id="v-cellSize">—</span></div>
+    <div class="bd" id="v-memNote"></div>
+  </div>
+
+  <div class="section" id="sec-mbu">
+    <h3 id="h-mbu-back">MBU 反推</h3>
+    <div class="metric"><span class="k" id="k-mbuObs">实测 MBU（由 TPOT）</span>
+      <span class="v purple" id="v-mbuObs">—</span></div>
+    <div class="metric"><span class="k" id="k-mbuObsOut">实测 MBU（由输出吞吐）</span>
+      <span class="v purple" id="v-mbuObsOut">—</span></div>
+    <div class="bd" id="v-mbuNote"></div>
+  </div>
+
+  <div class="note" id="v-assumptions"></div>
+</section>
+</div>
+<script>
+const GPU_PRESETS = {
+  a100_80g:{hbm:80,  tflops:312,  bwTBs:2.0,  label:"A100 80G"},
+  h100:    {hbm:80,  tflops:990,  bwTBs:3.35, label:"H100 80G"},
+  h200:    {hbm:141, tflops:990,  bwTBs:4.8,  label:"H200 141G"},
+  b200:    {hbm:192, tflops:2250, bwTBs:8.0,  label:"B200 192G"},
+  b300:    {hbm:288, tflops:2250, bwTBs:8.0,  label:"B300 288G"},
+  mi300x:  {hbm:192, tflops:1300, bwTBs:5.3,  label:"MI300X 192G"},
+};
+const MODEL_PRESETS = {
+  mimo_v25:    {label:"MiMo-V2.5 (hybrid)",   activeB:15.4,layers:48,fullLayers:9, kvHeads:4,headDim:192,dtypeBytes:2,hybrid:true, mla:false,qHeads:32,swaWindow:128},
+  mimo_v25_pro:{label:"MiMo-V2.5-Pro (hybrid)",activeB:44.5,layers:70,fullLayers:10,kvHeads:8,headDim:192,dtypeBytes:2,hybrid:true, mla:false,qHeads:48,swaWindow:128},
+  llama8b:     {label:"Llama-3-8B (GQA)",     activeB:8,  layers:32,kvHeads:8, headDim:128,dtypeBytes:2,hybrid:false,mla:false,qHeads:32},
+  llama70b:    {label:"Llama-3-70B (GQA)",    activeB:70, layers:80,kvHeads:8, headDim:128,dtypeBytes:2,hybrid:false,mla:false,qHeads:64},
+  qwen32b:     {label:"Qwen-32B (GQA)",       activeB:32, layers:64,kvHeads:8, headDim:128,dtypeBytes:2,hybrid:false,mla:false,qHeads:40},
+  deepseekv3:  {label:"DeepSeek-V3 (MLA)",    activeB:37, layers:61,kvHeads:1, headDim:576,dtypeBytes:2,hybrid:false,mla:true, qHeads:128,kvLoraRank:512,qkRope:64},
+};
+function cellSizeOf(m){
+  if(m.mla) return (m.kvLoraRank+m.qkRope)*m.layers*m.dtypeBytes;
+  return (m.hybrid?m.fullLayers:m.layers)*m.kvHeads*m.headDim*m.dtypeBytes*2;
+}
+function fmtK(v){
+  if(!isFinite(v)||isNaN(v)) return "—";
+  if(v>=1e9) return (v/1e9).toFixed(2)+"B";
+  if(v>=1e6) return (v/1e6).toFixed(2)+"M";
+  if(v>=1e3) return (v/1e3).toFixed(1)+"K";
+  return v.toFixed(0);
+}
+function fmtMs(v){return !isFinite(v)?"—":v>=1000?(v/1000).toFixed(2)+"s":v.toFixed(1)+"ms";}
+function fmtNum(v){return !isFinite(v)?"—":v>=100?v.toFixed(0):v.toFixed(1);}
+function fmtGB(v){return !isFinite(v)?"—":v.toFixed(1)+" GB";}
+function fmtPct(v){return !isFinite(v)?"—":(v*100).toFixed(1)+"%";}
+function fmtBytes(v){
+  if(!isFinite(v)) return "—";
+  if(v>=2**30) return (v/2**30).toFixed(2)+" GB";
+  if(v>=2**20) return (v/2**20).toFixed(1)+" MB";
+  if(v>=2**10) return (v/2**10).toFixed(1)+" KB";
+  return v.toFixed(0)+" B";
+}
+
+/* ══════════ core compute (decode 侧) ══════════ */
+function compute(P){
+  const gpu = GPU_PRESETS[P.gpu], m = MODEL_PRESETS[P.model];
+  const tp = Math.max(1, P.tp), dp = Math.max(1, P.dp), ep = Math.max(1, P.ep);
+  const B = Math.max(1, P.batch);
+  const bw = gpu.bwTBs * 1e12 * tp;              // aggregate HBM bandwidth in a TP group (B/s)
+  const activeParams = m.activeB * 1e9;
+
+  const peak = gpu.tflops * 1e12 * tp;                      // aggregate compute in TP group (FLOP/s)
+  const cell = cellSizeOf(m);                               // 每 token KV 字节
+  const avgCtx = P.inputLen + P.outputLen / 2;              // decode 期间平均 KV 长度
+  const kvBytesPerReq = avgCtx * cell;
+  const kvBytes = B * kvBytesPerReq;                        // 整批 KV，每步读一遍
+
+  // MTP：verify step 内每请求处理 q=k+1 个 query 位。acceptLen 优先用实测，否则几何链。
+  const k = Math.max(0, Math.round(P.mtpK));
+  const a = Math.min(1, Math.max(0, P.acceptRate));
+  const acceptLenTheory = k === 0 ? 1 : (a >= 1 ? k + 1 : (1 - a ** (k + 1)) / (1 - a));
+  const acceptLen = P.acceptLenObs >= 1 ? P.acceptLenObs : acceptLenTheory;
+  const q = k + 1;                                          // query 位/请求/步
+  const tokPerStep = B * q;                                 // 整批 query 位
+
+  // MTP head 额外权重：每个草稿模块 ≈ 1 层 transformer，粗估 k×(activeParams/layers)。
+  const mtpHeadBytes = k * (activeParams / m.layers) * m.dtypeBytes;
+  const weightBytes = activeParams * m.dtypeBytes;          // 主模型激活权重，每步读一次
+  const gemmMemBytes = weightBytes + mtpHeadBytes;
+  const bytesPerStep = gemmMemBytes + kvBytes;
+
+  // ① GEMM 相（权重矩阵乘）：roofline = max(读权重, 算 2N×tokPerStep)
+  const gemmMemMs  = gemmMemBytes / (bw * P.mbu) * 1000;
+  const gemmCompMs = 2 * activeParams * tokPerStep / (peak * P.mfu) * 1000;
+  const gemmMs = Math.max(gemmMemMs, gemmCompMs);
+
+  // ② Attention 相：KV 每步读一遍（flash attn 内 q 个 query 位共享）；算力随 tokPerStep×ctx 放大
+  const fullLayers = m.hybrid ? m.fullLayers : m.layers;
+  const swaLayers  = m.hybrid ? (m.layers - m.fullLayers) : 0;
+  const swaWindow  = m.swaWindow || 0;
+  const swaCtx = swaWindow > 0 ? Math.min(swaWindow, avgCtx) : avgCtx;
+  const flopsPerLayerTokTok = 4 * m.qHeads * m.headDim;     // QK^T + softmax·V，单层单(q,k)
+  const attnFlops = flopsPerLayerTokTok * (fullLayers * avgCtx + swaLayers * swaCtx) * tokPerStep;
+  const attnMemMs  = kvBytes / (bw * P.mbu) * 1000;
+  const attnCompMs = attnFlops / (peak * P.mfu) * 1000;
+  const attnMs = Math.max(attnMemMs, attnCompMs);
+
+  const stepMs = gemmMs + attnMs;                           // 一个 decode/verify step 墙钟
+  const computeBound = (gemmCompMs > gemmMemMs) || (attnCompMs > attnMemMs);
+  const tpotMs = stepMs / acceptLen;                        // 有效每 token 延时（MTP 摊薄）
+  const perInstThput = B * acceptLen / (stepMs / 1000);    // 单实例 tok/s
+  const decodeSlots = P.numD * dp;                         // 并发 decode 实例数
+  const outThput = perInstThput * decodeSlots;             // 全系统输出 tok/s
+
+  // roofline 拐点（纯带宽视角）：weightBytes == kvBytes 时 B* = weightBytes / kvBytesPerReq
+  const kneeBatch = weightBytes / kvBytesPerReq;
+
+  // memory: TP shards weights + EP shards experts → each card frees HBM for KV
+  const kvBudgetGB = gpu.hbm * tp * ep * P.kvFrac;
+  const maxTok = kvBudgetGB * 2**30 / cell;    // GB treated as GiB (2**30), ~7% conservative
+  const maxBatch = maxTok / avgCtx;                        // 按平均上下文估最大批
+
+  // MBU 反推①：from observed TPOT。实测 TPOT 是「有效」值（已被 MTP 摊薄），
+  // 先 ×acceptLen 还原成真实 step 墙钟，再反推带宽。
+  let mbuObs = NaN;
+  if (P.obsTpot > 0){
+    const obsStepMs = P.obsTpot * acceptLen;               // 还原 verify step 墙钟
+    const obsBw = bytesPerStep / (obsStepMs / 1000);       // 实际达到的带宽 B/s
+    mbuObs = obsBw / bw;
+  }
+  // MBU 反推②：from observed 输出吞吐（全系统）。先 ÷decodeSlots 得单实例，
+  // 单实例 tok/s = B×acceptLen / step → 反解 step → 反推带宽。
+  let mbuObsOut = NaN, obsStepFromOut = NaN;
+  if (P.obsOut > 0){
+    const perInstObs = P.obsOut / decodeSlots;             // 单实例 tok/s
+    obsStepFromOut = B * acceptLen / perInstObs * 1000;    // 反解 step 墙钟(ms)
+    const obsBw = bytesPerStep / (obsStepFromOut / 1000);
+    mbuObsOut = obsBw / bw;
+  }
+  return {bw, peak, weightBytes, mtpHeadBytes, gemmMemBytes, cell, avgCtx,
+          kvBytesPerReq, kvBytes, bytesPerStep,
+          gemmMemMs, gemmCompMs, gemmMs, attnMemMs, attnCompMs, attnMs,
+          stepMs, computeBound, tpotMs, perInstThput, decodeSlots, outThput, kneeBatch,
+          kvBudgetGB, maxTok, maxBatch, B, q, tokPerStep,
+          mbuObs, mbuObsOut, obsStepFromOut,
+          activeParams, acceptLen, acceptLenTheory, mtpK: k, acceptRate: a};
+}
+
+/* ══════════ read params + render ══════════ */
+function readParams(){
+  const num = id => parseFloat(document.getElementById(id).value);
+  const val = id => document.getElementById(id).value;
+  return {
+    gpu: val("gpu"), model: val("model"),
+    tp: num("tp"), dp: num("dp"), ep: num("ep"), numD: num("numD"),
+    mbu: num("mbu"), mfu: num("mfu") || 0.4,
+    inputLen: num("inputLen"), outputLen: num("outputLen"),
+    batch: num("batch"), kvFrac: num("kvFrac"),
+    mtpK: num("mtpK") || 0, acceptRate: num("acceptRate") || 0,
+    acceptLenObs: parseFloat(document.getElementById("acceptLenObs").value) || 0,
+    obsTpot: parseFloat(document.getElementById("obsTpot").value) || 0,
+    obsOut: parseFloat(document.getElementById("obsOut").value) || 0,
+  };
+}
+function set(id, txt){ document.getElementById(id).textContent = txt; }
+function html(id, h){ document.getElementById(id).innerHTML = h; }
+
+/* TPOT / MBU 公式 + 当前参数代入 */
+function renderFormula(P, r){
+  const gpu = GPU_PRESETS[P.gpu], m = MODEL_PRESETS[P.model];
+  const bwT = gpu.bwTBs * P.tp;                     // 聚合带宽 TB/s
+  html("v-formula",
+    `<b>两相 roofline</b>：step = GEMM相 + Attention相，每相取 max(带宽时间, 算力时间)`
+    + `<br>GEMM相：max(读权重 ÷ (带宽×MBU), 2N×tokPerStep ÷ (算力×MFU))`
+    + `<br>Attn相：max(读批KV ÷ (带宽×MBU), attnFLOPs ÷ (算力×MFU))`
+    + (r.mtpK > 0 ? `<br>MTP：verify 每请求 q=k+1 个 query 位，KV 只读一遍但算力随 q 放大 → 大 batch/长 ctx/大 k 时翻成算力瓶颈。` : ``)
+    + `<div class="divider"></div>`
+    + `<b>正向</b>： GEMM <code>${fmtMs(r.gemmMs)}</code>(mem ${fmtMs(r.gemmMemMs)}/comp ${fmtMs(r.gemmCompMs)}) + Attn <code>${fmtMs(r.attnMs)}</code>(mem ${fmtMs(r.attnMemMs)}/comp ${fmtMs(r.attnCompMs)}) = step <code class="ok">${fmtMs(r.stepMs)}</code>`
+    + (r.computeBound ? ` <span class="warn">[算力瓶颈]</span>` : ` <span class="ok">[带宽瓶颈]</span>`)
+    + `<br>有效 TPOT = step ÷ acceptLen <code>${r.acceptLen.toFixed(2)}</code> ≈ <code class="green">${fmtMs(r.tpotMs)}</code>`
+    + `；输出吞吐 = B×acceptLen ÷ step × (numD×DP=${r.decodeSlots}) ≈ <code class="accent">${fmtK(r.outThput)} tok/s</code>`
+    + `<div class="divider"></div>`
+    + `<b>反向</b>（由实测 TPOT 反推 MBU，仅带宽瓶颈下有意义）： MBU = 字节/步 ÷ (实测step × 峰值带宽)`
+    + (P.obsTpot > 0
+        ? (r.acceptLen > 1
+            ? `<br>实测 step = TPOT ${P.obsTpot}ms × acceptLen ${r.acceptLen.toFixed(2)} = <code>${(P.obsTpot*r.acceptLen).toFixed(1)}ms</code>`
+            : ``)
+          + `<br>= ${fmtBytes(r.bytesPerStep)} ÷ (${(P.obsTpot*r.acceptLen).toFixed(1)}ms × ${bwT.toFixed(2)}TB/s)`
+          + ` ≈ <code class="purple">${fmtPct(r.mbuObs)}</code>`
+          + (r.computeBound ? `<br><span class="warn">当前理论为算力瓶颈，反推的「MBU」混入了算力项，仅供参考。</span>` : ``)
+        : `<br><span class="warn">填入左栏「实测 TPOT」即可反推当前 MBU。</span>`)
+    + `<div class="divider"></div>`
+    + `<b>注</b>：GEMM 权重每步读一次、被整批摊薄；KV 随 B 线性增长；MTP 把每步 query 位 ×q，算力项随之放大。`);
+}
+
+function render(){
+  const P = readParams();
+  const r = compute(P);
+  const gpu = GPU_PRESETS[P.gpu], m = MODEL_PRESETS[P.model];
+  const bwEff = gpu.bwTBs * P.tp * P.mbu;                 // 有效带宽 TB/s
+
+  set("v-outThput", fmtK(r.outThput)+" tok/s");
+  set("v-tpot",     fmtMs(r.tpotMs));
+  set("v-perInst",  fmtK(r.perInstThput)+" tok/s");
+  set("v-stepMs",   fmtMs(r.stepMs));
+  set("k-stepMs",   "decode step 墙钟" + (r.computeBound ? "（算力瓶颈）" : "（带宽瓶颈）"));
+  const totalConc = r.B * r.decodeSlots;
+  set("v-concurrency", totalConc + " req");
+  set("k-concurrency", "全系统并发 = B×numD×DP = " + r.B + "×" + r.decodeSlots);
+
+  // ① 分解（两相 roofline）
+  html("v-breakdown",
+    `step = GEMM相 <code>${fmtMs(r.gemmMs)}</code> + Attn相 <code>${fmtMs(r.attnMs)}</code> = <code>${fmtMs(r.stepMs)}</code>`
+    + (r.computeBound ? ` <span class="warn">[算力瓶颈]</span>` : ` <span class="ok">[带宽瓶颈]</span>`)
+    + `<div class="divider"></div>`
+    + `<b>① query 位/步</b>：q=k+1=<code>${r.q}</code>，整批 tokPerStep = B <code>${r.B}</code> × q = <code>${fmtK(r.tokPerStep)}</code>`
+    + `<br><b>② GEMM 权重</b>：2N(bf16) <code>${fmtBytes(r.weightBytes)}</code>${r.mtpHeadBytes>0?` + MTP头 <code>${fmtBytes(r.mtpHeadBytes)}</code>`:``}`
+    + `<br><b>③ GEMM相</b>：max(读权重 <code>${fmtMs(r.gemmMemMs)}</code>, 算 2N×tokPerStep <code>${fmtMs(r.gemmCompMs)}</code>) = <code>${fmtMs(r.gemmMs)}</code>`
+    + `<br><b>④ 平均 KV 长度</b>：输入 <code>${fmtK(P.inputLen)}</code> + 输出 <code>${fmtK(P.outputLen)}</code>/2 = <code>${fmtK(r.avgCtx)}</code> tok；批KV <code>${fmtBytes(r.kvBytes)}</code>`
+    + `<br><b>⑤ Attn相</b>：max(读批KV <code>${fmtMs(r.attnMemMs)}</code>, attnFLOPs <code>${fmtMs(r.attnCompMs)}</code>) = <code>${fmtMs(r.attnMs)}</code>`
+    + `<br><b>⑥ acceptLen</b>：${r.acceptLen>1?(P.acceptLenObs>=1?`实测填入 <code class="orange">${r.acceptLen.toFixed(2)}</code>`:`k=${r.mtpK},α=${r.acceptRate.toFixed(2)} → 几何链 <code class="orange">${r.acceptLen.toFixed(2)}</code>`):`无 MTP = 1`}`
+    + `<br><b>⑦ 有效 TPOT</b>：step <code>${fmtMs(r.stepMs)}</code> ÷ acceptLen <code>${r.acceptLen.toFixed(2)}</code> = <code class="green">${fmtMs(r.tpotMs)}</code>`);
+
+  html("v-thput-note",
+    `<b>⑧ 单实例吞吐</b>：B <code>${r.B}</code> × acceptLen <code>${r.acceptLen.toFixed(2)}</code> ÷ step <code>${fmtMs(r.stepMs)}</code> = <code>${fmtK(r.perInstThput)} tok/s</code>`
+    + `<br><b>⑨ 全系统吞吐</b>：单实例 <code>${fmtK(r.perInstThput)}</code> × 实例数(numD×DP=<code>${r.decodeSlots}</code>) = <code class="accent">${fmtK(r.outThput)} tok/s</code>`);
+
+  renderFormula(P, r);
+
+  // roofline
+  set("v-wBytes",  fmtBytes(r.weightBytes));
+  set("v-kvBytes", fmtBytes(r.kvBytes));
+  set("v-knee",    r.kneeBatch >= 1 ? "B≈"+r.kneeBatch.toFixed(0) : "<1");
+  const kvBound = r.B > r.kneeBatch;
+  html("v-rooflineNote",
+    `拐点 B* = 权重字节 ÷ 单请求KV = <code>${fmtBytes(r.weightBytes)}</code> ÷ <code>${fmtBytes(r.kvBytesPerReq)}</code> ≈ <code class="orange">${r.kneeBatch.toFixed(0)}</code>`
+    + `<br>当前 B <code>${r.B}</code> ${kvBound
+        ? `> B* → <span class="warn">KV 瓶颈区</span>：再加大 B，TPOT 随 KV 线性上升、单实例吞吐已接近饱和。`
+        : `≤ B* → <span class="ok">权重瓶颈区</span>：TPOT 近乎常数，加大 B 几乎线性提升吞吐（KV 还没占满带宽）。`}`
+    + `<br><span style="color:var(--muted)">长上下文（大 avgCtx）会把 B* 往小推 —— 单请求 KV 变大，更早进入 KV 瓶颈。</span>`);
+
+  // memory
+  set("v-kvBudget", fmtGB(r.kvBudgetGB));
+  set("v-maxTok",   fmtK(r.maxTok)+" tok");
+  set("v-maxBatch", r.maxBatch.toFixed(0)+" req");
+  set("v-cellSize", (r.cell/1024).toFixed(1)+" KB");
+  const fits = r.B <= r.maxBatch;
+  html("v-memNote",
+    `KV 预算 = HBM ${gpu.hbm}G × TP${P.tp} × EP${P.ep} × ${P.kvFrac} = <code>${fmtGB(r.kvBudgetGB)}</code>`
+    + `<br>批 B <code>${r.B}</code> × 平均 <code>${fmtK(r.avgCtx)}</code> tok → `
+    + (fits ? `<span class="ok">✓ 装得下 (占 ${fmtPct(r.B/r.maxBatch)} KV)</span>`
+            : `<span class="warn">✗ 超预算：最大只能容 ${r.maxBatch.toFixed(0)} req</span>`));
+
+  // MBU 反推（TPOT 入口 or 输出吞吐入口，任一填了就显示）
+  const secMbu = document.getElementById("sec-mbu");
+  const rowTpot = document.getElementById("k-mbuObs").parentElement;
+  const rowOut  = document.getElementById("k-mbuObsOut").parentElement;
+  if (P.obsTpot > 0 || P.obsOut > 0){
+    secMbu.style.display = "";
+    rowTpot.style.display = P.obsTpot > 0 ? "" : "none";
+    rowOut.style.display  = P.obsOut  > 0 ? "" : "none";
+    if (P.obsTpot > 0) set("v-mbuObs", fmtPct(r.mbuObs));
+    if (P.obsOut  > 0) set("v-mbuObsOut", fmtPct(r.mbuObsOut));
+    const mbuMain = P.obsOut > 0 ? r.mbuObsOut : r.mbuObs;   // 吞吐口径优先讲解
+    const lowMbu = mbuMain < 0.5;
+    let noteOut = "";
+    if (P.obsOut > 0){
+      const perInstObs = P.obsOut / r.decodeSlots;
+      noteOut = `<b>由输出吞吐</b>：实测 <code>${fmtK(P.obsOut)}</code> tok/s ÷ 实例数 <code>${r.decodeSlots}</code>`
+        + ` = 单实例 <code>${fmtK(perInstObs)}</code> tok/s → 反解 step <code>${fmtMs(r.obsStepFromOut)}</code>`
+        + `（理论 <code>${fmtMs(r.stepMs)}</code>）→ MBU <code class="${r.mbuObsOut<0.5?'warn':'ok'}">${fmtPct(r.mbuObsOut)}</code>`
+        + `<br><span style="color:var(--muted)">若反解 step ≫ 理论 step，多半不是带宽没打满，而是<b>平均在跑的 batch 远小于 B</b>`
+        + `（decode 被 prefill 饿着 / 排队 / 到达不均），或含调度采样开销。</span><div class="divider"></div>`;
+    }
+    html("v-mbuNote", noteOut
+      + (P.obsTpot > 0 ? `<b>由 TPOT</b>：实测 <code>${P.obsTpot}ms</code>，字节/步 <code>${fmtBytes(r.bytesPerStep)}</code> → MBU <code class="${r.mbuObs<0.5?'warn':'ok'}">${fmtPct(r.mbuObs)}</code><br>` : ``)
+      + (lowMbu ? `<span class="warn">带宽利用偏低：batch 太小（权重摊不开）、kernel 未融合、或平均 batch/非 decode 开销拉低。</span>`
+                : `<span class="ok">decode 带宽已打得较满。</span>`)
+      + (mbuMain>1 ? `<br><span class="warn">MBU>100%：实测快于纯带宽上限，说明 B/avgCtx/cell/权重假设偏高（或实测吞吐口径不是全系统）。</span>` : ``));
+  } else {
+    secMbu.style.display = "none";
+  }
+  html("v-assumptions",
+    `<b>假设与口径</b>：step = GEMM相 + Attn相，每相取 max(带宽时间, 算力时间)（两相 roofline）。`
+    + `GEMM相带宽 = 读激活权重(2N·bf16)+MTP头；算力 = 2N×tokPerStep。`
+    + `Attn相带宽 = 读整批 KV(B×avgCtx×cell，q 个 query 位共享一遍)；算力 = 4·qHeads·headDim·层·ctx×tokPerStep。`
+    + `<b>有效 TPOT = step ÷ acceptLen</b>；<b>MTP 每请求 q=k+1 个 query 位，算力项随 q 放大 → 大 batch/长 ctx/大 k 会翻成算力瓶颈</b>。`
+    + `avgCtx = 输入 + 输出/2（一阶近似）。EP 只进显存预算不改带宽。KV 预算 HBM×TP×EP×占比（一阶）。`
+    + `未含 prefill 首 token、调度/采样、DP 通信与草稿被拒的浪费；MoE 权重按 activeB（大 batch 下会偏低）。`
+    + `<b>MTP 剩余近似</b>：acceptLen 默认几何链 (1−α^(k+1))/(1−α)（各草稿位独立同分布，真实随位置递减，可用「实测 acceptLen」覆盖）；`
+    + `MTP head 权重按 1 层粗估；线性链、未建 EAGLE 树形草稿。`);
+}
+
+/* ══════════ init ══════════ */
+function init(){
+  const gpuSel = document.getElementById("gpu");
+  for (const [k,v] of Object.entries(GPU_PRESETS)){
+    const o = document.createElement("option");
+    o.value = k; o.textContent = v.label; gpuSel.appendChild(o);
+  }
+  gpuSel.value = "h200";
+  const modelSel = document.getElementById("model");
+  for (const [k,v] of Object.entries(MODEL_PRESETS)){
+    const o = document.createElement("option");
+    o.value = k; o.textContent = v.label; modelSel.appendChild(o);
+  }
+  modelSel.value = "mimo_v25";
+  document.getElementById("tp").value = "1";
+  document.getElementById("dp").value = "1";
+  document.querySelectorAll("input,select").forEach(el => {
+    el.addEventListener("input", render);
+    el.addEventListener("change", render);
+  });
+  render();
+}
+init();
+</script>
+</body>
+</html>

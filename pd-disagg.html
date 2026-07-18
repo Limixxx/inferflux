@@ -1,0 +1,2105 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; base-uri 'self'; form-action 'none'">
+<meta name="viewport" content="width=820, viewport-fit=cover">
+<title>PD Disaggregation Simulator · PD 分离模拟器</title>
+<style>
+:root{
+  --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --border:#2d3646;
+  --text:#e6edf3; --muted:#8b98a9; --accent:#4ea1ff;
+  --amber:#f0b429; --grey:#7d8590; --blue:#4ea1ff; --green:#3fb950;
+  --purple:#bc8cff; --red:#f85149; --cyan:#39c5cf; --orange:#f0883e;
+  --radius:10px; --sidebar-w:300px;
+}
+*{box-sizing:border-box; margin:0; padding:0;}
+html,body{height:100%;}
+body{
+  background:var(--bg); color:var(--text);
+  font-family:-apple-system,"SF Pro","Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
+  font-size:13px; overflow:hidden;
+}
+button,select,input{font-family:inherit; font-size:12px; color:var(--text);}
+button{
+  background:var(--panel2); border:1px solid var(--border); border-radius:6px;
+  padding:4px 10px; cursor:pointer; white-space:nowrap;
+}
+button:hover{border-color:var(--accent);}
+button.active{background:var(--accent); color:#04121f; border-color:var(--accent); font-weight:600;}
+select{background:var(--panel2); border:1px solid var(--border); border-radius:6px; padding:3px 6px;}
+
+/* ---- top bar ---- */
+#topbar{
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  padding:8px 12px; border-bottom:1px solid var(--border); background:var(--panel);
+}
+#topbar .title{font-size:15px; font-weight:700; margin-right:6px;}
+#topbar .title small{color:var(--muted); font-weight:400; font-size:11px;}
+#topbar .home{color:var(--muted); font-size:12px; text-decoration:none; margin-right:4px;}
+#topbar .home:hover{color:var(--accent);}
+#topbar .gh-link{display:inline-flex; align-items:center; color:var(--muted); margin-left:auto; transition:color .18s;}
+#topbar .gh-link:hover{color:var(--accent);}
+#topbar .sep{width:1px; height:20px; background:var(--border); margin:0 2px;}
+#speedWrap{display:flex; align-items:center; gap:6px;}
+#speedWrap input[type=range]{width:110px;}
+#speedVal{min-width:44px; color:var(--accent); font-variant-numeric:tabular-nums;}
+#simClock{color:var(--muted); font-variant-numeric:tabular-nums; min-width:88px;}
+#presetWrap{display:flex; gap:6px; align-items:center;}
+#sidebarToggle{display:inline-block;}
+
+/* ---- layout ---- */
+#layout{display:flex; height:calc(100% - 45px);}
+#sidebar{
+  width:var(--sidebar-w); min-width:var(--sidebar-w);
+  overflow-y:auto; border-right:1px solid var(--border); background:var(--panel);
+  padding:10px 12px 40px;
+  transition:width .2s ease, min-width .2s ease, padding .2s ease;
+}
+#main{flex:1; min-width:0; display:flex; flex-direction:column; overflow-y:auto; padding:10px;}
+
+/* ---- sidebar params ---- */
+.pgroup{margin-bottom:14px;}
+.pgroup h3{
+  font-size:11px; text-transform:uppercase; letter-spacing:.08em;
+  color:var(--muted); border-bottom:1px solid var(--border);
+  padding-bottom:4px; margin-bottom:8px;
+}
+.prow{margin-bottom:9px;}
+.prow .plabel{display:flex; justify-content:space-between; margin-bottom:2px;}
+.prow .plabel .pname{color:var(--text);}
+.prow .plabel .pval{color:var(--accent); font-variant-numeric:tabular-nums;}
+.prow input[type=range]{width:100%; accent-color:var(--accent); height:18px;}
+.prow select{width:100%;}
+.pinfo{
+  background:var(--panel2); border:1px solid var(--border); border-radius:6px;
+  padding:6px 8px; font-size:11px; color:var(--muted); line-height:1.6;
+}
+.pinfo b{color:var(--cyan); font-variant-numeric:tabular-nums;}
+
+/* ---- flow canvas ---- */
+#flowWrap{position:relative; width:100%;}
+#flow{
+  width:100%; display:block; background:var(--panel);
+  border:1px solid var(--border); border-radius:var(--radius);
+}
+
+/* ---- breakdown ---- */
+#bdWrap{margin-top:10px; background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:8px 12px;}
+#bdWrap h3{font-size:12px; color:var(--muted); margin-bottom:6px;}
+#bd{width:100%; height:86px; display:block;}
+
+/* ---- metric cards ---- */
+#metrics{
+  display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr));
+  gap:8px; margin-top:10px;
+}
+.mcard{
+  background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
+  padding:8px 10px 6px;
+}
+.mcard .mtitle{font-size:11px; color:var(--muted); margin-bottom:2px;}
+.mcard .mval{font-size:18px; font-weight:700; font-variant-numeric:tabular-nums;}
+.mcard .mval small{font-size:10px; color:var(--muted); font-weight:400;}
+.mcard .msub{font-size:10px; color:var(--muted); font-variant-numeric:tabular-nums; margin-bottom:2px; min-height:12px;}
+.mcard canvas{width:100%; height:34px; display:block;}
+
+/* sidebar collapse — works at any width; the flow canvas reflows to fill
+   the freed space on the next frame (renderer.resize reads clientWidth). */
+#sidebar.collapsed{
+  width:0; min-width:0; padding-left:0; padding-right:0;
+  border-right:0; overflow:hidden;
+}
+/* narrow (mobile) viewport: slimmer sidebar so the flow gets more room */
+@media (max-width:820px){
+  :root{ --sidebar-w:200px; }
+}
+::-webkit-scrollbar{width:8px; height:8px;}
+::-webkit-scrollbar-thumb{background:var(--border); border-radius:4px;}
+</style>
+</head>
+<body>
+<header id="topbar">
+  <button id="sidebarToggle">☰</button>
+  <div class="title">PD分离推理模拟器</div>
+  <a class="home" href="index.html">← 首页</a>
+  <div class="sep"></div>
+  <button id="btnPause"></button>
+  <button id="btnStep"></button>
+  <button id="btnReset"></button>
+  <div id="speedWrap">
+    <span data-i18n="ctl.speed"></span>
+    <input type="range" id="speed" min="-2" max="6" step="0.25" value="0">
+    <span id="speedVal">1×</span>
+  </div>
+  <span id="simClock">t = 0.0 s</span>
+  <div class="sep"></div>
+  <div id="presetWrap">
+    <span data-i18n="ctl.presets"></span>
+    <button class="preset" data-preset="balanced"></button>
+    <button class="preset" data-preset="transferBound"></button>
+    <button class="preset" data-preset="prefillBound"></button>
+    <button class="preset" data-preset="decodeSaturated"></button>
+  </div>
+  <div class="sep"></div>
+  <button id="btnLang">EN</button>
+  <a class="gh-link" href="https://github.com/Abatom/inferflux" target="_blank" rel="noopener" aria-label="GitHub">
+    <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"></path></svg>
+  </a>
+</header>
+<div id="layout">
+  <aside id="sidebar"><!-- generated --></aside>
+  <main id="main">
+    <div id="flowWrap"><canvas id="flow"></canvas></div>
+    <div id="bdWrap">
+      <h3 data-i18n="bd.title"></h3>
+      <canvas id="bd"></canvas>
+    </div>
+    <section id="metrics"><!-- generated --></section>
+  </main>
+</div>
+
+<script>
+"use strict";
+/* =====================================================================
+ *  PD-Disaggregation Simulator — single-file, zero-dependency web app.
+ *  Mirrors SGLang's real PD-disaggregation request lifecycle:
+ *    tokenizer → router(bootstrap_room) →
+ *    P: PrefillBootstrapQueue → waiting_queue → chunked prefill → inflight/KV-transfer
+ *    D: DecodePreallocQueue → DecodeTransferQueue → waiting_queue → prebuilt(first
+ *       token) → decode_loop (continuous batching) → detokenizer
+ *  Metrics (TTFT/TPOT/E2E) are measured from simulated event timestamps,
+ *  never computed from closed-form formulas.
+ * ===================================================================== */
+
+/* ============================ I18N ================================== */
+const DICT = {
+  zh: {
+    "ctl.pause":"⏸ 暂停","ctl.resume":"▶ 继续","ctl.step":"⏭ 单步","ctl.reset":"↺ 重置",
+    "ctl.speed":"倍速","ctl.presets":"场景:",
+    "preset.balanced":"均衡","preset.transferBound":"传输瓶颈",
+    "preset.prefillBound":"Prefill 瓶颈","preset.decodeSaturated":"Decode 饱和",
+    "g.workload":"负载","g.topology":"拓扑","g.latency":"延时","g.compute":"计算","g.kv":"KV Cache / 传输",
+    "p.qps":"QPS","p.arrivalDist":"到达模式","arrival.poisson":"泊松（随机）","arrival.uniform":"均匀（等间隔）",
+    "p.inputLenMean":"输入长度均值 (tokens)","p.inputDist":"输入长度分布",
+    "p.outputLenMean":"输出长度均值 (tokens)","p.outputDist":"输出长度分布",
+    "p.cacheHitRate":"Prefix Cache 命中率",
+    "p.numP":"Prefill 实例数","p.numD":"Decode 实例数",
+    "p.lbPolicyP":"Prefill 负载均衡策略","p.lbPolicyD":"Decode 负载均衡策略",
+    "lb.least":"最小负载","lb.round_robin":"轮询","lb.power_of_two":"二选一取低 (P2C)","lb.random":"随机",
+    "p.tokenizeUsPerTok":"Tokenizer 延时 (µs/token)",
+    "p.transferOverheadMs":"每次传输固定开销 (ms)","p.detokenizeMs":"Detokenizer 延时 (ms)",
+    "p.prefillTokPerSec":"Prefill 速度 (tok/s/实例)","p.chunkSize":"Chunked Prefill 大小",
+    "p.decodeMsBase":"Decode 步基础延时 (ms)","p.decodeMsPerReq":"Decode 每请求增量 (ms/req)",
+    "p.maxRunning":"最大并行请求数 (每 D 实例)",
+    "p.newTokenRatio":"new_token_ratio 准入预留系数（下限）",
+    "p.modelPreset":"模型（决定 KV cell size）","p.gpu":"显卡（决定 KV 显存）",
+    "p.kvGbP":"P 实例 KV 显存 (GB)","p.kvGbD":"D 实例 KV 显存 (GB)",
+    "p.bandwidthGBs":"KV 传输带宽 (GB/s/链路)",
+    "dist.fixed":"固定","dist.uniform":"均匀 (±50%)","dist.lognormal":"对数正态",
+    "model.mimo_v25":"MiMo-V2.5 (混合注意力)","model.mimo_v25_pro":"MiMo-V2.5-Pro (混合注意力)",
+    "model.llama8b":"Llama-3-8B (GQA)","model.llama70b":"Llama-3-70B (GQA)",
+    "model.qwen32b":"Qwen-32B (GQA)","model.deepseekv3":"DeepSeek-V3 (MLA)","model.custom":"自定义",
+    "gpu.a100_80g":"A100 80G","gpu.h100":"H100 80G","gpu.h200":"H200 141G",
+    "gpu.b200":"B200 192G","gpu.b300":"B300 288G","gpu.mi300x":"MI300X 192G","gpu.custom":"自定义",
+    "p.layers":"层数","p.kvHeads":"KV heads","p.headDim":"head_dim","p.dtypeBytes":"dtype 字节数",
+    "p.swaWindow":"SWA 窗口 (0=关)",
+    "info.cell":"KV cell size","info.perTok":"/token","info.cap":"每实例容量",
+    "info.capP":"P 容量","info.capD":"D 容量","info.tokens":"tokens","info.fullAttn":"全注意力层",
+    "bd.title":"TTFT 分解（最近 ~10s 窗口均值）— 拖动参数观察瓶颈迁移",
+    "bd.tokenize":"Tokenize","bd.bootstrap":"Bootstrap 握手","bd.pQueue":"P 排队",
+    "bd.prefill":"Prefill 计算","bd.transfer":"KV 传输","bd.dQueue":"D 排队（传输后→running）",
+    "bd.detok":"Detok/响应",
+    "m.ttft":"TTFT 首token延时","m.tpot":"TPOT 每token延时","m.e2e":"端到端延时",
+    "m.rps":"完成吞吐","m.tps":"Token 吞吐","m.queue":"排队深度 (P等待/D等待)",
+    "m.running":"Decode 并行数","m.kvP":"KV 利用率 (P)","m.kvD":"KV 利用率 (D)",
+    "m.kvDpre":"预分配 KV 占用 (D)","m.kvDpre.sub":"其中预分配",
+    "m.dHandshake":"D 握手延时","m.link":"传输链路利用率",
+    "m.inflight":"在途请求数",
+    "n.client":"Client","n.router":"Router",
+    "n.prefill":"Prefill","n.decode":"Decode","inst.pipeline":"Tok→Sched→Detok",
+    "q.tok":"tokenize","q.bootstrap":"bootstrap","q.waiting":"waiting",
+    "q.prefilling":"prefill","q.inflight":"inflight",
+    "q.prealloc":"prealloc","q.transfer":"transfer","q.running":"running","q.retract":"retracted",
+    "lg.Bootstrapping":"Bootstrapping 握手中","lg.WaitingForInput":"排队/等待",
+    "lg.Transferring":"KV 传输中","lg.Success":"传输完成","lg.decoding":"Decoding","lg.tokenize":"Tokenize/Detok",
+    "lg.retract":"抢占重算",
+    "u.ms":"ms","u.s":"s","u.reqs":"req/s","u.toks":"tok/s",
+  },
+  en: {
+    "ctl.pause":"⏸ Pause","ctl.resume":"▶ Resume","ctl.step":"⏭ Step","ctl.reset":"↺ Reset",
+    "ctl.speed":"Speed","ctl.presets":"Presets:",
+    "preset.balanced":"Balanced","preset.transferBound":"Transfer-bound",
+    "preset.prefillBound":"Prefill-bound","preset.decodeSaturated":"Decode-saturated",
+    "g.workload":"Workload","g.topology":"Topology","g.latency":"Latencies","g.compute":"Compute","g.kv":"KV Cache / Transfer",
+    "p.qps":"QPS","p.arrivalDist":"Arrival pattern","arrival.poisson":"Poisson (bursty)","arrival.uniform":"Uniform (even)",
+    "p.inputLenMean":"Input length mean (tokens)","p.inputDist":"Input length dist",
+    "p.outputLenMean":"Output length mean (tokens)","p.outputDist":"Output length dist",
+    "p.cacheHitRate":"Prefix cache hit rate",
+    "p.numP":"# Prefill instances","p.numD":"# Decode instances",
+    "p.lbPolicyP":"Prefill LB policy","p.lbPolicyD":"Decode LB policy",
+    "lb.least":"Least load","lb.round_robin":"Round-robin","lb.power_of_two":"Power-of-two","lb.random":"Random",
+    "p.tokenizeUsPerTok":"Tokenizer latency (µs/token)",
+    "p.transferOverheadMs":"Per-transfer overhead (ms)","p.detokenizeMs":"Detokenizer latency (ms)",
+    "p.prefillTokPerSec":"Prefill speed (tok/s/inst)","p.chunkSize":"Chunked prefill size",
+    "p.decodeMsBase":"Decode step base (ms)","p.decodeMsPerReq":"Decode per-req coef (ms/req)",
+    "p.maxRunning":"Max running reqs (per D)",
+    "p.newTokenRatio":"new_token_ratio (admission reserve floor)",
+    "p.modelPreset":"Model (sets KV cell size)","p.gpu":"GPU (sets KV memory)",
+    "p.kvGbP":"KV memory per P (GB)","p.kvGbD":"KV memory per D (GB)",
+    "p.bandwidthGBs":"KV transfer bandwidth (GB/s/link)",
+    "dist.fixed":"Fixed","dist.uniform":"Uniform (±50%)","dist.lognormal":"Lognormal",
+    "model.mimo_v25":"MiMo-V2.5 (hybrid attn)","model.mimo_v25_pro":"MiMo-V2.5-Pro (hybrid attn)",
+    "model.llama8b":"Llama-3-8B (GQA)","model.llama70b":"Llama-3-70B (GQA)",
+    "model.qwen32b":"Qwen-32B (GQA)","model.deepseekv3":"DeepSeek-V3 (MLA)","model.custom":"Custom",
+    "gpu.a100_80g":"A100 80G","gpu.h100":"H100 80G","gpu.h200":"H200 141G",
+    "gpu.b200":"B200 192G","gpu.b300":"B300 288G","gpu.mi300x":"MI300X 192G","gpu.custom":"Custom",
+    "p.layers":"Layers","p.kvHeads":"KV heads","p.headDim":"head_dim","p.dtypeBytes":"dtype bytes",
+    "p.swaWindow":"SWA window (0=off)",
+    "info.cell":"KV cell size","info.perTok":"/token","info.cap":"capacity per instance",
+    "info.capP":"P capacity","info.capD":"D capacity","info.tokens":"tokens","info.fullAttn":"full-attn layers",
+    "bd.title":"TTFT breakdown (mean over recent ~10s window) — drag any slider to watch the bottleneck move",
+    "bd.tokenize":"Tokenize","bd.bootstrap":"Bootstrap","bd.pQueue":"P queue",
+    "bd.prefill":"Prefill compute","bd.transfer":"KV transfer","bd.dQueue":"D queue (post-transfer→running)",
+    "bd.detok":"Detok/response",
+    "m.ttft":"TTFT","m.tpot":"TPOT","m.e2e":"E2E latency",
+    "m.rps":"Request throughput","m.tps":"Token throughput","m.queue":"Queue depth (P wait / D wait)",
+    "m.running":"Decode running","m.kvP":"KV util (P)","m.kvD":"KV util (D)",
+    "m.kvDpre":"Prealloc KV (D)","m.kvDpre.sub":"of which prealloc",
+    "m.dHandshake":"D handshake latency","m.link":"Transfer link util",
+    "m.inflight":"In-flight requests",
+    "n.client":"Client","n.router":"Router",
+    "n.prefill":"Prefill","n.decode":"Decode","inst.pipeline":"Tok→Sched→Detok",
+    "q.tok":"tokenize","q.bootstrap":"bootstrap","q.waiting":"waiting",
+    "q.prefilling":"prefill","q.inflight":"inflight",
+    "q.prealloc":"prealloc","q.transfer":"transfer","q.running":"running","q.retract":"retracted",
+    "lg.Bootstrapping":"Bootstrapping","lg.WaitingForInput":"Queued/Waiting",
+    "lg.Transferring":"KV transferring","lg.Success":"Transfer done","lg.decoding":"Decoding","lg.tokenize":"Tokenize/Detok",
+    "lg.retract":"Retract/recompute",
+    "u.ms":"ms","u.s":"s","u.reqs":"req/s","u.toks":"tok/s",
+  },
+};
+let LANG = (navigator.language || "").toLowerCase().startsWith("zh") ? "zh" : "en";
+function t(k){ return (DICT[LANG][k] !== undefined) ? DICT[LANG][k] : k; }
+
+/* ======================= PARAMS & PRESETS ============================ */
+/* hybrid = SWA + full attention (MiMo-V2). Only the full-attention layers grow
+   KV with context; SWA layers are capped at a 128-token window (fixed, tiny), so
+   the per-token cell size uses fullLayers. This is what lets MiMo serve 1M ctx.
+   activeB = activated params in billions (MoE counts only routed+shared experts
+   that fire per token); weightGb = activated-weight bytes to stream per decode
+   step at bf16 (≈ 2 × activeB). */
+const MODEL_PRESETS = {
+  mimo_v25:    {layers:48, fullLayers:9,  kvHeads:4, headDim:192, dtypeBytes:2, hybrid:true, mla:false, activeB:15.4, qHeads:32, swaWindow:128},
+  mimo_v25_pro:{layers:70, fullLayers:10, kvHeads:8, headDim:192, dtypeBytes:2, hybrid:true, mla:false, activeB:44.5, qHeads:48, swaWindow:128},
+  llama8b:   {layers:32, kvHeads:8,  headDim:128, dtypeBytes:2, mla:false, activeB:8,  qHeads:32},
+  llama70b:  {layers:80, kvHeads:8,  headDim:128, dtypeBytes:2, mla:false, activeB:70, qHeads:64},
+  qwen32b:   {layers:64, kvHeads:8,  headDim:128, dtypeBytes:2, mla:false, activeB:32, qHeads:40},
+  deepseekv3:{layers:61, kvHeads:1,  headDim:576, dtypeBytes:2, mla:true, kvLoraRank:512, qkRope:64, activeB:37, qHeads:128},
+};
+
+/* GPU presets: hbm (GB), bf16 dense TFLOP/s, HBM bandwidth (TB/s). Selecting one
+   sets the KV budget (≈70% of HBM). */
+const GPU_PRESETS = {
+  a100_80g:{hbm:80,  tflops:312,  bwTBs:2.0},
+  h100:    {hbm:80,  tflops:990,  bwTBs:3.35},
+  h200:    {hbm:141, tflops:990,  bwTBs:4.8},
+  b200:    {hbm:192, tflops:2250, bwTBs:8.0},
+  b300:    {hbm:288, tflops:2250, bwTBs:8.0},
+  mi300x:  {hbm:192, tflops:1300, bwTBs:5.3},
+};
+const gpuKvBudget = hbm => Math.round(hbm * 0.7);
+const PERREQ_REF_CTX = 4096;      // reference context length decodeMsPerReq is calibrated to
+
+const DEFAULTS = {
+  qps:4, arrivalDist:"poisson", inputLenMean:2048, inputDist:"lognormal",
+  outputLenMean:256, outputDist:"lognormal", cacheHitRate:0.9,
+  numP:2, numD:2, lbPolicyP:"least", lbPolicyD:"least",
+  tokenizeUsPerTok:1, transferOverheadMs:5, detokenizeMs:2,
+  activeB:15.4, prefillTokPerSec:20000, chunkSize:8192,
+  decodeMsBase:20, decodeMsPerReq:0.15, maxRunning:64, newTokenRatio:0.2,
+  modelPreset:"mimo_v25", gpu:"h200",
+  layers:48, fullLayers:9, kvHeads:4, headDim:192, dtypeBytes:2, hybrid:true,
+  mla:false, kvLoraRank:512, qkRope:64, qHeads:32, swaWindow:128,
+  kvGbP:99, kvGbD:99, bandwidthGBs:50,
+};
+
+const PRESETS = {
+  balanced: {...DEFAULTS},
+  transferBound: {...DEFAULTS, qps:6, inputLenMean:8192, cacheHitRate:0, bandwidthGBs:1.5,
+                  transferOverheadMs:15, modelPreset:"llama70b",
+                  layers:80, fullLayers:80, kvHeads:8, headDim:128, dtypeBytes:2,
+                  hybrid:false, mla:false},
+  prefillBound: {...DEFAULTS, qps:12, inputLenMean:6144, cacheHitRate:0.05,
+                 prefillTokPerSec:8000, numP:1, numD:2, bandwidthGBs:40},
+  decodeSaturated: {...DEFAULTS, qps:10, inputLenMean:512, outputLenMean:1024,
+                    maxRunning:24, numP:2, numD:1, decodeMsPerReq:0.4},
+};
+
+function fmtTokens(v){
+  if (v >= 1e6) return (v / 1e6).toFixed(v % 1e6 === 0 ? 0 : 2) + "M";
+  if (v >= 1e3) return (v / 1e3).toFixed(v % 1e3 === 0 ? 0 : 1) + "k";
+  return v.toFixed(0);
+}
+/* log-scale slider: position ∈ [0,LOG_STEPS] ↔ value ∈ [min,max], snapped to a
+   1/2/3/5/7 grid within each decade so dragging lands on tidy round token counts
+   (lets you hit e.g. 70k, 300k, 700k, not just 50k/100k/200k/500k) */
+const LOG_STEPS = 1000;
+const SNAP_GRID = [1, 2, 3, 5, 7, 10];
+function logSliderToVal(def, pos){
+  if (pos <= 0) return def.min;                 // endpoints exact (e.g. 1M / 32k)
+  if (pos >= LOG_STEPS) return def.max;
+  const lo = Math.log(def.min), hi = Math.log(def.max);
+  const raw = Math.exp(lo + (hi - lo) * (pos / LOG_STEPS));
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const base = raw / mag;                       // 1..10
+  /* pick the nearest value on the 1/2/3/5/7 grid (geometric nearest) */
+  let snap = SNAP_GRID[0];
+  for (const g of SNAP_GRID)
+    if (Math.abs(Math.log(base / g)) < Math.abs(Math.log(base / snap))) snap = g;
+  return Math.max(def.min, Math.min(def.max, Math.round(snap * mag)));
+}
+function nearestStepIdx(def, val){    // closest index in a discrete steps[] slider
+  let idx = 0, best = Infinity;
+  for (let i = 0; i < def.steps.length; i++){
+    const d = Math.abs(def.steps[i] - val);
+    if (d < best){ best = d; idx = i; }
+  }
+  return idx;
+}
+function logValToSlider(def, val){
+  const lo = Math.log(def.min), hi = Math.log(def.max);
+  return Math.max(0, Math.min(LOG_STEPS,
+    Math.round((Math.log(val) - lo) / (hi - lo) * LOG_STEPS)));
+}
+
+/* sidebar slider/select definitions (order = display order) */
+const PARAM_DEFS = [
+  {group:"workload", key:"qps", min:0.2, max:64, step:0.2, fmt:v=>v.toFixed(1)},
+  {group:"workload", key:"arrivalDist", type:"select", options:["poisson","uniform"], i18nPrefix:"arrival."},
+  {group:"workload", key:"inputLenMean", min:16, max:1048576, log:true, fmt:fmtTokens},
+  {group:"workload", key:"inputDist", type:"select", options:["fixed","uniform","lognormal"], i18nPrefix:"dist."},
+  {group:"workload", key:"outputLenMean", min:4, max:32768, log:true, fmt:fmtTokens},
+  {group:"workload", key:"outputDist", type:"select", options:["fixed","uniform","lognormal"], i18nPrefix:"dist."},
+  {group:"workload", key:"cacheHitRate", min:0, max:1, step:0.01, fmt:v=>(v*100).toFixed(0)+"%"},
+  {group:"topology", key:"numP", min:1, max:8, step:1, fmt:v=>v.toFixed(0)},
+  {group:"topology", key:"numD", min:1, max:8, step:1, fmt:v=>v.toFixed(0)},
+  {group:"topology", key:"lbPolicyP", type:"select",
+   options:["least","round_robin","power_of_two","random"], i18nPrefix:"lb."},
+  {group:"topology", key:"lbPolicyD", type:"select",
+   options:["least","round_robin","power_of_two","random"], i18nPrefix:"lb."},
+  {group:"latency", key:"tokenizeUsPerTok", min:0, max:50, step:0.5, fmt:v=>v.toFixed(1)},
+  {group:"latency", key:"transferOverheadMs", min:0, max:200, step:1, fmt:v=>v.toFixed(0)},
+  {group:"latency", key:"detokenizeMs", min:0, max:50, step:0.5, fmt:v=>v.toFixed(1)},
+  {group:"compute", key:"prefillTokPerSec", min:1000, max:100000, step:500, fmt:v=>(v/1000).toFixed(1)+"k"},
+  {group:"compute", key:"chunkSize", steps:[1024,2048,4096,8192,16384,32768,65536], fmt:fmtTokens},
+  {group:"compute", key:"decodeMsBase", min:5, max:200, step:1, fmt:v=>v.toFixed(0)},
+  {group:"compute", key:"decodeMsPerReq", min:0, max:2, step:0.05, fmt:v=>v.toFixed(2)},
+  {group:"compute", key:"maxRunning", min:1, max:512, step:1, fmt:v=>v.toFixed(0)},
+  {group:"compute", key:"newTokenRatio", min:0.05, max:1, step:0.05, fmt:v=>v.toFixed(2)},
+  {group:"kv", key:"modelPreset", type:"select",
+   options:["mimo_v25","mimo_v25_pro","llama8b","llama70b","qwen32b","deepseekv3","custom"], i18nPrefix:"model."},
+  {group:"kv", key:"layers", min:4, max:128, step:1, fmt:v=>v.toFixed(0), customOnly:true},
+  {group:"kv", key:"kvHeads", min:1, max:64, step:1, fmt:v=>v.toFixed(0), customOnly:true},
+  {group:"kv", key:"headDim", min:32, max:1024, step:16, fmt:v=>v.toFixed(0), customOnly:true},
+  {group:"kv", key:"dtypeBytes", min:1, max:4, step:1, fmt:v=>v.toFixed(0), customOnly:true},
+  {group:"kv", key:"swaWindow", steps:[0,128,256,512,1024,2048,4096], fmt:v=>v===0?"off":fmtTokens(v)},
+  {group:"kv", key:"gpu", type:"select",
+   options:["a100_80g","h100","h200","b200","b300","mi300x","custom"], i18nPrefix:"gpu."},
+  {group:"kv", key:"kvGbP", min:1, max:288, step:1, fmt:v=>v.toFixed(0)},
+  {group:"kv", key:"kvGbD", min:1, max:288, step:1, fmt:v=>v.toFixed(0)},
+  {group:"kv", key:"bandwidthGBs", min:0.25, max:200, step:0.25, fmt:v=>v.toFixed(2)},
+];
+const GROUPS = ["workload","topology","latency","compute","kv"];
+
+/*ENGINE-START*/
+/* ================= RNG & distributions (DOM-free engine below) ======= */
+const TICK = 5;                 // ms of sim time per engine tick
+const RING_MAX = 4096;          // completed-request ring for percentiles
+const SERIES_LEN = 300;         // 300 × 1s buckets for sparklines
+const BUCKET_MS = 1000;
+/* SGLang admission/retraction analogs (schedule_policy.py / new_token_ratio_tracker.py):
+   new_token_ratio reserves KV headroom for in-flight decodes; it is raised on a
+   retraction and decays back toward its floor (P.newTokenRatio) over NTR_DECAY_STEPS
+   healthy decode steps. NTR_CLIP caps the per-request projected-new-tokens estimate
+   (SGLang CLIP_MAX_NEW_TOKENS). */
+const NTR_MAX = 1.0;            // most-conservative reserve (reserve full projected decode)
+const NTR_CLIP = 4096;         // cap on projected new tokens per request
+const NTR_DECAY_STEPS = 600;   // healthy steps to decay ntr from MAX back to floor
+/* Fixed bootstrap-server round-trip (register/query + connect). This is a small
+   network cost; the *dominant* bootstrap wait emerges from D-side pre-alloc
+   gating (P's pop_bootstrapped only finalizes once D signals WaitingForInput,
+   which requires D KV pre-allocation to succeed) — so it is NOT a slider. */
+const HANDSHAKE_RTT_MS = 2;
+
+function clamp(v, lo, hi){ return v < lo ? lo : (v > hi ? hi : v); }
+function mulberry32(seed){
+  let a = seed >>> 0;
+  return function(){
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function expSample(rng, mean){ return -Math.log(1 - rng()) * mean; }
+function lognormalSample(rng, mean, sigma){
+  const mu = Math.log(mean) - sigma * sigma / 2;
+  const u1 = rng(), u2 = rng();
+  const z = Math.sqrt(-2 * Math.log(1 - u1)) * Math.cos(2 * Math.PI * u2);
+  return Math.exp(mu + sigma * z);
+}
+function sampleLen(rng, mean, dist){
+  let v;
+  if (dist === "fixed") v = mean;
+  else if (dist === "uniform") v = mean * (0.5 + rng());
+  else v = lognormalSample(rng, mean, 0.5);
+  return Math.max(1, Math.round(v));
+}
+
+/* KV cell size in bytes/token — mirrors pool_configurator._compute_cell_size.
+   hybrid (MiMo-V2): only full-attention layers grow with context; SWA layers are
+   window-capped so they don't count toward per-token cost. */
+function cellSizeOf(P){
+  if (P.mla) return (P.kvLoraRank + P.qkRope) * P.layers * P.dtypeBytes;
+  const growLayers = P.hybrid ? P.fullLayers : P.layers;
+  return growLayers * P.kvHeads * P.headDim * P.dtypeBytes * 2;
+}
+
+/* KVPoll states — mirrors sglang disaggregation/base/conn.py KVPoll */
+const KVPOLL = { Bootstrapping:"Bootstrapping", WaitingForInput:"WaitingForInput",
+                 Transferring:"Transferring", Success:"Success" };
+
+/* ============================ Entities =============================== */
+let REQ_SEQ = 0;
+function makeRequest(engine, arrivalT){
+  const P = engine.P, rng = engine.rng;
+  const inputLen = sampleLen(rng, P.inputLenMean, P.inputDist);
+  const outputLen = Math.max(2, sampleLen(rng, P.outputLenMean, P.outputDist));
+  const hit = clamp(P.cacheHitRate + (rng() - 0.5) * 0.2, 0, 1);
+  const cachedLen = Math.min(inputLen - 1, Math.round(inputLen * hit));
+  return {
+    id: REQ_SEQ++,
+    room: Math.floor(rng() * 1e9),           // bootstrap_room (mini_lb pairing)
+    inputLen, outputLen, cachedLen,
+    uncachedLen: inputLen - cachedLen,       // radix-cache miss: computed AND transferred
+    stage: "tokenize", kvPoll: null,
+    p: null, d: null,
+    readyAt: Infinity,
+    dReadyAt: Infinity,                       // decode-side handshake done time
+    dPrealloc: false,
+    chunksTotal: 0, chunksComputed: 0, chunksQueued: 0, chunksTransferred: 0,
+    bytesTotal: 0, bytesDone: 0,
+    tokensOut: 0,
+    retracted: false,                         // set when retract_decode evicts it
+    stamps: { recv: arrivalT, tokenized: NaN, bootstrapDone: NaN, pQueueExit: NaN,
+              prefillDone: NaN, transferDone: NaN, preallocDone: NaN,
+              dQueueExit: NaN, firstToken: NaN, lastToken: NaN, detokDone: NaN },
+  };
+}
+function chunkTokens(engine, r, idx){
+  return Math.min(engine.P.chunkSize, r.uncachedLen - idx * engine.P.chunkSize);
+}
+/* Wall-clock ms for one prefill chunk = GEMM (linear in tokens, via prefillTokPerSec)
+   + attention (O(query-tokens × KV-length): each of the q query tokens attends the
+   whole prefix it can see — cached hits + prior chunks + this chunk's own average).
+   Full-attn layers see the entire context → O(q·ctx); SWA layers cap each query at a
+   fixed window → O(q·min(W,ctx)), constant once ctx>W.
+   Effective FLOP rate is implied by the manual GEMM speed: since GEMM is 2N FLOPs/token,
+   flops·MFU = prefillTokPerSec · 2N (N = activated params). We reuse that rate to price
+   attention FLOPs (4·qHeads·headDim per query·KV·layer), so the two stay self-consistent. */
+function chunkPrefillMs(P, r, idx){
+  const q = Math.min(P.chunkSize, r.uncachedLen - idx * P.chunkSize);
+  const gemmMs = q / P.prefillTokPerSec * 1000;
+  const effFlops = P.prefillTokPerSec * 2 * (P.activeB * 1e9);   // flops·MFU implied by GEMM speed
+  const fullLayers = P.hybrid ? P.fullLayers : P.layers;
+  const swaLayers  = P.hybrid ? (P.layers - P.fullLayers) : 0;
+  const flopsPerLayer = 4 * P.qHeads * P.headDim;               // QK^T(2d)+softmax·V(2d), per query·KV·layer
+  const coefFull = flopsPerLayer * fullLayers / effFlops * 1000; // ms per (query-token × KV-token)
+  const coefSwa  = flopsPerLayer * swaLayers  / effFlops * 1000;
+  const ctx = r.cachedLen + idx * P.chunkSize + q / 2;          // avg KV length these q attend
+  const W = P.swaWindow || 0;
+  const swaCtx = W > 0 ? Math.min(W, ctx) : ctx;                // SWA layers capped at window
+  return gemmMs + coefFull * q * ctx + coefSwa * q * swaCtx;
+}
+
+class TransferLink {           // one egress link per Prefill instance
+  constructor(){ this.queue = []; this.current = null; this.startAt = 0; this.doneAt = 0; }
+  get depth(){ return this.queue.length + (this.current ? 1 : 0); }
+}
+
+class PrefillInstance {
+  constructor(id){
+    this.id = id;
+    this.bootstrapQ = [];      // PrefillBootstrapQueue
+    this.waitingQ = [];        // scheduler waiting_queue
+    /* one chunked prefill in progress at a time, entry {req, busyUntil}. */
+    this.slots = [];
+    this.inflight = [];        // disagg_prefill_inflight_queue (awaiting KV send)
+    this.kvUsed = 0;
+    this.draining = false;
+    this.link = new TransferLink();
+  }
+  maxTokens(P){ return Math.max(1, Math.floor(P.kvGbP * 2**30 / cellSizeOf(P))); }
+  pendingLoad(){
+    let s = 0;
+    for (const r of this.bootstrapQ) s += r.uncachedLen;
+    for (const r of this.waitingQ) s += r.uncachedLen;
+    for (const slot of this.slots) s += slot.req.uncachedLen;
+    return s;
+  }
+  isEmpty(){
+    return this.slots.length === 0 && !this.link.current && this.bootstrapQ.length === 0 &&
+           this.waitingQ.length === 0 && this.inflight.length === 0 && this.link.queue.length === 0;
+  }
+}
+
+class DecodeInstance {
+  constructor(id){
+    this.id = id;
+    this.preallocQ = [];       // DecodePreallocQueue (handshake + pre-alloc)
+    this.transferQ = [];       // DecodeTransferQueue (waiting for KV Success)
+    this.waitingQ = [];        // scheduler waiting_queue
+    this.running = [];         // continuous batch
+    this.kvUsed = 0;
+    this.nextStepAt = null;
+    this.draining = false;
+    this.ntr = 0;              // new_token_ratio (admission reserve); init in resetNtr
+    this.retractGlow = -1e9;   // last retraction time (viz glow)
+  }
+  maxTokens(P){ return Math.max(1, Math.floor(P.kvGbD * 2**30 / cellSizeOf(P))); }
+  /* One decode forward step is memory-bandwidth bound: it streams the activated
+     weights (decodeMsBase) plus every running request's KV cache from HBM. KV
+     size scales with each request's context length (inputLen + tokens generated
+     so far), so a batch holding long contexts steps slower than the same batch
+     count with short contexts. decodeMsPerReq is calibrated to PERREQ_REF_CTX
+     tokens, so we scale it by actualCtx/refCtx and sum across the batch. */
+  decodeStepMs(P){
+    const perTokMs = P.decodeMsPerReq / PERREQ_REF_CTX;   // ms to read 1 token's KV
+    let kvMs = 0;
+    for (const r of this.running) kvMs += perTokMs * (r.inputLen + r.tokensOut);
+    return P.decodeMsBase + kvMs;
+  }
+  pendingLoad(){                 // running batch dominates decode load
+    return this.preallocQ.length + this.transferQ.length +
+           this.waitingQ.length + this.running.length;
+  }
+  isEmpty(){
+    return this.preallocQ.length === 0 && this.transferQ.length === 0 &&
+           this.waitingQ.length === 0 && this.running.length === 0;
+  }
+  /* KV headroom reserved for in-flight decodes (SGLang rem_total_token_offset):
+     Σ_running min(outputLen − tokensOut, CLIP) · ntr */
+  reservedOffset(){
+    let off = 0;
+    for (const r of this.running)
+      off += Math.min(r.outputLen - r.tokensOut, NTR_CLIP) * this.ntr;
+    return off;
+  }
+  /* SGLang estimate_new_token_ratio_after_retract: raise ntr toward MAX based on
+     how little the batch has decoded (less progress ⇒ reserve more). */
+  raiseNtrAfterRetract(){
+    let decoded = 0, projected = 0;
+    for (const r of this.running){
+      decoded += r.tokensOut;
+      projected += Math.min(r.outputLen, NTR_CLIP);
+    }
+    const frac = projected > 0 ? decoded / projected : 0;   // 0..1 how far along
+    this.ntr = clamp(Math.max(this.ntr, 1 - frac), this.ntr, NTR_MAX);
+  }
+  /* SGLang retract_decode: while the next step's new tokens (running.length) don't
+     fit, evict the request with fewest decoded tokens (tie: longest prompt),
+     release its KV, KEEP its generated tokens (re-prefill on re-admit), and push
+     it back to the head of waiting_queue. Returns count retracted.
+     NOTE: like SGLang, retraction always keeps ≥1 request; a single request
+     whose input+output alone exceeds the pool would overrun it — SGLang aborts
+     such a request (FINISH_ABORT), which this sim does not model. */
+  retractDecode(P, engine, now){
+    const cap = this.maxTokens(P);
+    let count = 0;
+    while (this.running.length > 1 && this.kvUsed + this.running.length > cap){
+      let vi = 0;
+      for (let i = 1; i < this.running.length; i++){
+        const a = this.running[i], b = this.running[vi];
+        if (a.tokensOut < b.tokensOut ||
+            (a.tokensOut === b.tokensOut && a.inputLen > b.inputLen)) vi = i;
+      }
+      const victim = this.running[vi];
+      this.kvUsed -= (victim.inputLen + victim.tokensOut);   // release KV (dropped, recompute later)
+      this.running.splice(vi, 1);
+      victim.retracted = true;                               // keep tokensOut & firstToken
+      victim.stage = "d_waiting";
+      this.waitingQ.unshift(victim);                         // re-admit soon (re-prefill)
+      count++;
+    }
+    if (count){ this.raiseNtrAfterRetract(); this.retractGlow = now; engine.retractTotal += count; }
+    return count;
+  }
+}
+
+/* Load-balancing policy — mirrors sgl-model-gateway policies (round_robin,
+   random, power_of_two = pick 2 at random and take lower load, least = the
+   cache-aware/least-load style). Returns the chosen instance from `pool`
+   (already filtered to non-draining), using `loadOf(inst)` as the load metric
+   and a per-role round-robin counter object {i}. */
+function selectByPolicy(policy, pool, loadOf, rng, rr){
+  if (pool.length === 1) return pool[0];
+  switch (policy){
+    case "round_robin":
+      return pool[rr.i++ % pool.length];
+    case "random":
+      return pool[Math.floor(rng() * pool.length)];
+    case "power_of_two": {
+      const a = pool[Math.floor(rng() * pool.length)];
+      let b = pool[Math.floor(rng() * pool.length)];
+      if (b === a) b = pool[(pool.indexOf(a) + 1) % pool.length];
+      return loadOf(a) <= loadOf(b) ? a : b;
+    }
+    case "least":
+    default: {
+      let best = pool[0], bl = loadOf(best);
+      for (let i = 1; i < pool.length; i++){
+        const l = loadOf(pool[i]);
+        if (l < bl){ bl = l; best = pool[i]; }
+      }
+      return best;
+    }
+  }
+}
+
+/* ========================= MetricsCollector ========================== */
+const SERIES_KEYS = ["ttft","tpot","e2e","rps","tps","pQueue","dQueue","running",
+                     "kvP","kvD","kvDpre","dHandshake","link","inflight"];
+const BD_KEYS = ["tokenize","bootstrap","pQueue","prefill","transfer","dQueue","detok"];
+
+class MetricsCollector {
+  constructor(){ this.reset(0); }
+  reset(now){
+    this.ring = new Array(RING_MAX); this.ringN = 0; this.ringIdx = 0;
+    this.series = {};
+    for (const k of SERIES_KEYS){
+      this.series[k] = new Float64Array(SERIES_LEN).fill(NaN);
+    }
+    this.seriesHead = 0; this.seriesCount = 0;
+    this.bucketStart = now;
+    this.bkComp = 0; this.bkTokens = 0; this.bkTtftSum = 0; this.bkTpotSum = 0;
+    this.bkE2eSum = 0; this.bkDhsSum = 0;
+    /* per-bucket TTFT-breakdown sums, windowed like the other series so the
+       breakdown bar recovers promptly instead of lagging over the 4096 ring */
+    this.bkBd = new Array(BD_KEYS.length).fill(0);
+    this.bdSeries = [];
+    for (let j = 0; j < BD_KEYS.length; j++)
+      this.bdSeries.push(new Float64Array(SERIES_LEN).fill(NaN));
+    this.totalCompleted = 0; this.totalTokens = 0;
+  }
+  record(r, now){
+    const s = r.stamps;
+    const ttft = s.firstToken - s.recv;
+    const tpot = r.outputLen > 1 ? (s.lastToken - s.firstToken) / (r.outputLen - 1) : 0;
+    const e2e = s.detokDone - s.recv;
+    this.bkE2eSum = (this.bkE2eSum || 0) + e2e;
+    const bd = [
+      s.tokenized - s.recv,               // per-instance tokenize (P/D in parallel)
+      s.bootstrapDone - s.tokenized,
+      s.pQueueExit - s.bootstrapDone,
+      s.prefillDone - s.pQueueExit,
+      s.transferDone - s.prefillDone,     // residual transfer beyond prefill overlap
+      s.dQueueExit - s.transferDone,
+      s.firstToken - s.dQueueExit,        // detok → tokenizer manager → router
+    ];
+    /* D-side handshake: DecodePreallocQueue RTT + wait for D KV to pre-alloc
+       (preallocDone − tokenized). Runs concurrently with P's bootstrap. */
+    const dHandshake = s.preallocDone - s.tokenized;
+    this.ring[this.ringIdx] = { ttft, tpot, e2e, bd, dHandshake, t: now };
+    this.ringIdx = (this.ringIdx + 1) % RING_MAX;
+    if (this.ringN < RING_MAX) this.ringN++;
+    this.bkComp++; this.bkTokens += r.outputLen;
+    this.bkTtftSum += ttft; this.bkTpotSum += tpot;
+    this.bkDhsSum = (this.bkDhsSum || 0) + dHandshake;
+    for (let j = 0; j < BD_KEYS.length; j++) this.bkBd[j] += bd[j];
+    this.totalCompleted++; this.totalTokens += r.outputLen;
+  }
+  /* roll 1-second buckets; gauges sampled from engine at roll time */
+  tick(now, engine){
+    while (now - this.bucketStart >= BUCKET_MS){
+      this.bucketStart += BUCKET_MS;
+      const g = engine.sampleGauges();
+      const put = (k, v) => { this.series[k][this.seriesHead] = v; };
+      put("ttft", this.bkComp ? this.bkTtftSum / this.bkComp : NaN);
+      put("tpot", this.bkComp ? this.bkTpotSum / this.bkComp : NaN);
+      put("e2e", this.bkComp ? this.bkE2eSum / this.bkComp : NaN);
+      put("rps", this.bkComp * 1000 / BUCKET_MS);
+      put("tps", this.bkTokens * 1000 / BUCKET_MS);
+      put("pQueue", g.pQueue); put("dQueue", g.dQueue); put("running", g.running);
+      put("kvP", g.kvP); put("kvD", g.kvD); put("kvDpre", g.kvDpre); put("link", g.link);
+      put("dHandshake", this.bkComp ? this.bkDhsSum / this.bkComp : NaN);
+      put("inflight", g.inflight);
+      for (let j = 0; j < BD_KEYS.length; j++)
+        this.bdSeries[j][this.seriesHead] = this.bkComp ? this.bkBd[j] / this.bkComp : NaN;
+      this.seriesHead = (this.seriesHead + 1) % SERIES_LEN;
+      if (this.seriesCount < SERIES_LEN) this.seriesCount++;
+      this.bkComp = 0; this.bkTokens = 0; this.bkTtftSum = 0; this.bkTpotSum = 0;
+      this.bkE2eSum = 0; this.bkDhsSum = 0;
+      this.bkBd.fill(0);
+    }
+  }
+  /* percentiles + breakdown means over the completed-request ring.
+     With (now, windowMs) only requests that completed within the last windowMs
+     are included, so the latency cards reflect recent traffic rather than the
+     whole run. No-arg call keeps the full ring (used by the self-tests). */
+  snapshot(now, windowMs){
+    const total = this.ringN;
+    if (total === 0) return null;
+    const cutoff = (windowMs != null && now != null) ? now - windowMs : -Infinity;
+    const ttftA = [], tpotA = [], e2eA = [], dhsA = [];
+    const bdSum = new Array(BD_KEYS.length).fill(0);
+    for (let i = 0; i < total; i++){
+      const e = this.ring[i];
+      if (e.t != null && e.t < cutoff) continue;
+      ttftA.push(e.ttft); tpotA.push(e.tpot); e2eA.push(e.e2e);
+      dhsA.push(e.dHandshake || 0);
+      for (let j = 0; j < BD_KEYS.length; j++) bdSum[j] += e.bd[j];
+    }
+    const n = ttftA.length;
+    if (n === 0) return null;
+    const ttfts = Float64Array.from(ttftA), tpots = Float64Array.from(tpotA);
+    const e2es = Float64Array.from(e2eA), dhss = Float64Array.from(dhsA);
+    ttfts.sort(); tpots.sort(); e2es.sort(); dhss.sort();
+    const pct = (arr, p) => arr[Math.min(n - 1, Math.floor(p * n))];
+    const avg = arr => { let s = 0; for (const v of arr) s += v; return s / n; };
+    return {
+      n,
+      ttft: { avg: avg(ttfts), p50: pct(ttfts, .5), p99: pct(ttfts, .99) },
+      tpot: { avg: avg(tpots), p50: pct(tpots, .5), p99: pct(tpots, .99) },
+      e2e:  { avg: avg(e2es),  p50: pct(e2es, .5),  p99: pct(e2es, .99) },
+      dHandshake: { avg: avg(dhss), p99: pct(dhss, .99) },
+      bd: bdSum.map(v => v / n),
+    };
+  }
+  latestSeries(k){ // returns [values oldest→newest]
+    const out = [];
+    const start = (this.seriesHead - this.seriesCount + SERIES_LEN) % SERIES_LEN;
+    for (let i = 0; i < this.seriesCount; i++)
+      out.push(this.series[k][(start + i) % SERIES_LEN]);
+    return out;
+  }
+  /* windowed TTFT-breakdown over recent 1s buckets (not the 4096 ring), so the
+     bar recovers promptly when load drops. Falls back to the ring snapshot only
+     until the first bucket with completions exists. */
+  recentBreakdown(lastN){
+    const out = new Array(BD_KEYS.length).fill(0);
+    let any = false;
+    for (let j = 0; j < BD_KEYS.length; j++){
+      let sum = 0, cnt = 0;
+      for (let back = 1; back <= Math.min(lastN, this.seriesCount); back++){
+        const v = this.bdSeries[j][(this.seriesHead - back + SERIES_LEN) % SERIES_LEN];
+        if (!Number.isNaN(v)){ sum += v; cnt++; }
+      }
+      if (cnt){ out[j] = sum / cnt; any = true; }
+    }
+    if (any) return out;
+    const s = this.snapshot();          // no recent completions yet → ring fallback
+    return s ? s.bd : out;
+  }
+}
+
+/* ============================ SimEngine ============================== */
+class SimEngine {
+  constructor(P, seed = 12345){
+    this.P = P;
+    this.rng = mulberry32(seed);
+    this.metrics = new MetricsCollector();
+    this.reset();
+  }
+  reset(){
+    this.now = 0;
+    this.pList = []; this.dList = [];
+    this.pSeq = 0; this.dSeq = 0;
+    this.responding = [];      // detok → tokenizer-manager → router → client
+    this.allActive = new Set();
+    this.rrP = { i: 0 }; this.rrD = { i: 0 };
+    this.nextArrival = this.P.arrivalDist === "uniform"
+      ? 1000 / Math.max(0.01, this.P.qps)
+      : expSample(this.rng, 1000 / Math.max(0.01, this.P.qps));
+    this.linkBusyMs = 0;               // reset each gauge sample
+    this.lastGaugeAt = 0;
+    this.inflightIntegral = 0;         // for Little's law check
+    this.debugMaxKvRatio = 0;
+    this.tokenConservationOk = true;
+    this.retractTotal = 0;             // count of retract_decode evictions (viz/test)
+    this.metrics.reset(0);
+    this.syncTopology();
+  }
+  syncTopology(){
+    const P = this.P;
+    while (this.pList.length < P.numP) this.pList.push(new PrefillInstance(this.pSeq++));
+    while (this.dList.length < P.numD) this.dList.push(new DecodeInstance(this.dSeq++));
+    for (let i = 0; i < this.pList.length; i++) this.pList[i].draining = i >= P.numP;
+    for (let i = 0; i < this.dList.length; i++) this.dList[i].draining = i >= P.numD;
+    while (this.pList.length > P.numP && this.pList[this.pList.length - 1].isEmpty())
+      this.pList.pop();
+    while (this.dList.length > P.numD && this.dList[this.dList.length - 1].isEmpty())
+      this.dList.pop();
+  }
+  advance(dtSim){
+    const target = this.now + dtSim;
+    while (this.now < target){
+      this.now = Math.min(target, this.now + TICK);
+      this.step();
+    }
+  }
+  step(){
+    const P = this.P, now = this.now;
+    this.syncTopology();
+
+    /* -- arrivals (Poisson) → router fans out to P AND D concurrently
+          (mini_lb: asyncio.gather(post(prefill), post(decode)), bootstrap_room
+          pairing). Each server then runs its own TokenizerManager. -- */
+    while (this.nextArrival <= now){
+      const r = makeRequest(this, this.nextArrival);
+      this.allActive.add(r);
+      /* router load-balances P and D independently via the selected policy
+         (mirrors sgl-model-gateway; P & D can use different policies) */
+      const activeP = this.pList.filter(p => !p.draining);
+      const activeD = this.dList.filter(d => !d.draining);
+      const best = selectByPolicy(P.lbPolicyP, activeP, p => p.pendingLoad(), this.rng, this.rrP);
+      const d = selectByPolicy(P.lbPolicyD, activeD, x => x.pendingLoad(), this.rng, this.rrD);
+      r.p = best; r.d = d;
+      /* per-instance tokenizer, ∝ input length; P & D tokenize in parallel */
+      const tokMs = r.inputLen * P.tokenizeUsPerTok / 1000;
+      r.stamps.tokenized = this.nextArrival + tokMs;
+      r.stage = "p_bootstrap"; r.kvPoll = KVPOLL.Bootstrapping;
+      /* both sides need the tokenized input + one bootstrap-server RTT before
+         they can act; P's finalize is additionally gated on D pre-alloc below */
+      r.readyAt = r.stamps.tokenized + HANDSHAKE_RTT_MS;   // prefill-side ready
+      r.dReadyAt = r.stamps.tokenized + HANDSHAKE_RTT_MS;  // decode-side ready
+      best.bootstrapQ.push(r);
+      d.preallocQ.push(r);
+      this.nextArrival += P.arrivalDist === "uniform"
+        ? 1000 / Math.max(0.01, P.qps)
+        : expSample(this.rng, 1000 / Math.max(0.01, P.qps));
+    }
+
+    /* -- Prefill instances -- */
+    for (const p of this.pList){
+      /* pop_bootstrapped: P finalizes bootstrap only once (a) its own RTT elapsed
+         and (b) the paired D has pre-allocated KV and signaled WaitingForInput
+         (r.dPrealloc). So when D's KV pool is full, requests pile up here and the
+         bootstrap wait grows on its own — it is an emergent effect of D KV
+         pressure, not a fixed latency. */
+      const ready = p.bootstrapQ.filter(r => r.readyAt <= now && r.dPrealloc);
+      if (ready.length){
+        const rdy = new Set(ready);
+        for (const r of ready){
+          r.stamps.bootstrapDone = now;
+          r.stage = "p_waiting"; r.kvPoll = KVPOLL.WaitingForInput;
+          p.waitingQ.push(r);
+        }
+        p.bootstrapQ = p.bootstrapQ.filter(r => !rdy.has(r));
+      }
+      /* admit waiting_queue head into the free slot while KV pool has room */
+      while (p.slots.length < 1 && p.waitingQ.length){
+        const r = p.waitingQ[0];
+        const cap = p.maxTokens(P);
+        if (p.kvUsed + r.inputLen > cap) break;
+        p.waitingQ.shift();
+        p.kvUsed += r.inputLen;
+        this.debugMaxKvRatio = Math.max(this.debugMaxKvRatio, p.kvUsed / cap);
+        r.stamps.pQueueExit = now;
+        r.stage = "p_prefill";
+        r.chunksTotal = Math.max(1, Math.ceil(r.uncachedLen / P.chunkSize));
+        r.bytesTotal = r.uncachedLen * cellSizeOf(P);
+        p.slots.push({ req: r, busyUntil: now + chunkPrefillMs(P, r, 0) });
+      }
+      /* chunk completions in the active slot (possibly several per tick) */
+      for (let si = p.slots.length - 1; si >= 0; si--){
+        const slot = p.slots[si];
+        while (slot.busyUntil <= now){
+          const r = slot.req;
+          r.chunksComputed++;
+          this.enqueueReadyChunks(p, r);   // send_kv_chunk per computed chunk
+          if (r.chunksComputed >= r.chunksTotal){
+            r.stamps.prefillDone = slot.busyUntil;
+            r.stage = "p_transfer"; r.kvPoll = KVPOLL.Transferring;
+            p.inflight.push(r);
+            p.slots.splice(si, 1);
+            break;
+          } else {
+            slot.busyUntil += chunkPrefillMs(P, r, r.chunksComputed);
+          }
+        }
+      }
+      /* transfer link progress */
+      const link = p.link;
+      for (;;){
+        if (link.current && link.doneAt <= now){
+          const it = link.current;
+          it.req.chunksTransferred++;
+          it.req.bytesDone += it.bytes;
+          link.current = null;
+          if (it.req.chunksTransferred >= it.req.chunksTotal && it.req.stage === "p_transfer")
+            this.completeTransfer(p, it.req, it.doneAtWas);
+        }
+        if (!link.current && link.queue.length){
+          const it = link.queue.shift();
+          /* "GB/s" treated as GiB/s (2**30), matching the KV-GB → tokens math;
+             ~7% conservative vs decimal GB */
+          const dur = P.transferOverheadMs + it.bytes / (P.bandwidthGBs * 2**30) * 1000;
+          link.current = it;
+          link.startAt = Math.max(now - TICK, link.doneAt); // back-to-back on same tick
+          link.doneAt = link.startAt + dur;
+          it.doneAtWas = link.doneAt;
+          continue;
+        }
+        break;
+      }
+      if (link.current) this.linkBusyMs += TICK;
+    }
+
+    /* -- Decode instances -- */
+    for (const d of this.dList){
+      /* DecodePreallocQueue: tokenize+handshake done + KV room. SGLang admission
+         (PrefillAdder): a candidate fits if input + projected-new-tokens ≤ the
+         pool minus what's reserved for in-flight decodes (reservedOffset, scaled
+         by new_token_ratio). Only the PREFILL KV (inputLen) is actually reserved
+         here; decode KV grows one token per step. Capacity failure blocks the
+         queue FIFO; unfinished handshakes are skipped (poll semantics). */
+      if (d.preallocQ.length && d.preallocQ.some(r => r.dReadyAt <= now)){
+        const still = [];
+        let blocked = false;
+        const cap = d.maxTokens(P);
+        for (const r of d.preallocQ){
+          if (blocked || r.dReadyAt > now){ still.push(r); continue; }
+          const projNew = Math.min(r.outputLen, NTR_CLIP);
+          const need = r.inputLen + projNew;                 // candidate footprint
+          const rem = cap - d.kvUsed - d.reservedOffset();   // headroom after in-flight reserve
+          if (need > rem){ still.push(r); blocked = true; continue; }
+          d.kvUsed += r.inputLen;                            // reserve prefill KV only
+          this.debugMaxKvRatio = Math.max(this.debugMaxKvRatio, d.kvUsed / cap);
+          r.dPrealloc = true;
+          r.stamps.preallocDone = now;
+          d.transferQ.push(r);
+          this.enqueueReadyChunks(r.p, r);         // flush chunks computed pre-prealloc
+        }
+        d.preallocQ.length = 0;
+        for (const r of still) d.preallocQ.push(r);
+      }
+      /* DecodeTransferQueue is drained in completeTransfer() */
+      /* waiting_queue → running batch. Continuous batching only merges new
+         requests at scheduler-step boundaries: a request that becomes ready
+         while a forward step is already in flight must wait for that step to
+         finish (nextStepAt) before it can join and commit its (prebuilt) first
+         token. `at` is the boundary time it actually enters the batch. */
+      if (d.ntr < P.newTokenRatio) d.ntr = P.newTokenRatio;   // lazy init to floor
+      const admit = (at) => {
+        const cap = d.maxTokens(P);
+        while (d.waitingQ.length && d.running.length < P.maxRunning){
+          const r = d.waitingQ[0];
+          /* KV a joining request consumes now: fresh reqs already have inputLen
+             reserved at prealloc, so they only add their 1st token; retracted reqs
+             had all KV dropped, so re-prefill restores inputLen + already-generated
+             tokens. Gate leaves room for one decode step over the whole batch. */
+          const joinKv = r.retracted ? (r.inputLen + r.tokensOut) : 1;
+          if (d.kvUsed + joinKv + (d.running.length + 1) > cap) break;   // no room → stop
+          d.waitingQ.shift();
+          d.kvUsed += joinKv;
+          this.debugMaxKvRatio = Math.max(this.debugMaxKvRatio, d.kvUsed / cap);
+          r.stamps.dQueueExit = at;
+          r.stage = "d_running";
+          if (!r.retracted){
+            r.tokensOut = 1;                        // first token from metadata buffer
+            /* client-visible first token passes detok → tokenizer-manager → router */
+            r.stamps.firstToken = at + P.detokenizeMs;
+            this.metrics.bkTokens++; this.metrics.totalTokens++;
+          } else {
+            r.retracted = false;                    // resumed: keep tokensOut & firstToken
+          }
+          r.lastTokenT = at;
+          d.running.push(r);
+        }
+      };
+      /* idle batch: no step in flight, so a ready request starts one now */
+      if (d.running.length === 0 && d.waitingQ.length){
+        admit(now);
+        d.nextStepAt = now + d.decodeStepMs(P);
+      }
+      /* decode_loop: run every forward step whose completion time has passed;
+         merge queued requests ONLY at each step boundary, never mid-step */
+      if (d.running.length === 0){
+        d.nextStepAt = null;
+        if (d.isEmpty()) d.ntr = P.newTokenRatio;    // idle → reset ntr (SGLang reset)
+        continue;
+      }
+      while (d.nextStepAt !== null && d.nextStepAt <= now){
+        const stepAt = d.nextStepAt;
+        const cap = d.maxTokens(P);
+        /* SGLang check_decode_mem: this step needs running.length new tokens; if
+           they don't fit, retract_decode evicts until they do (raises ntr). */
+        const retracted = d.retractDecode(P, this, stepAt);
+        if (d.running.length === 0){ d.nextStepAt = null; break; }
+        for (let i = d.running.length - 1; i >= 0; i--){
+          const r = d.running[i];
+          r.tokensOut++;
+          d.kvUsed += 1;                             // decode grows KV one token/req/step
+          r.lastTokenT = stepAt;
+          this.metrics.bkTokens++; this.metrics.totalTokens++;
+          if (r.tokensOut >= r.outputLen){
+            /* every streamed token passes D's detok → tokenizer manager → router */
+            r.stamps.lastToken = stepAt + P.detokenizeMs;
+            d.running.splice(i, 1);
+            d.kvUsed -= (r.inputLen + r.tokensOut); // release prefill + all generated KV
+            if (r.tokensOut !== r.outputLen) this.tokenConservationOk = false;
+            r.stage = "response"; r.readyAt = stepAt + P.detokenizeMs;
+            this.responding.push(r);
+          }
+        }
+        this.debugMaxKvRatio = Math.max(this.debugMaxKvRatio, d.kvUsed / cap);
+        /* healthy step (no retraction) → decay ntr back toward its floor */
+        if (!retracted)
+          d.ntr = Math.max(P.newTokenRatio, d.ntr - (NTR_MAX - P.newTokenRatio) / NTR_DECAY_STEPS);
+        admit(stepAt);        // step finished → merge requests that became ready
+        if (d.running.length === 0){ d.nextStepAt = null; break; }
+        d.nextStepAt = stepAt + d.decodeStepMs(P);   // scales with batch's context lengths
+      }
+    }
+
+    /* -- D detok → tokenizer manager → router → client: complete -- */
+    for (let i = this.responding.length - 1; i >= 0; i--){
+      const r = this.responding[i];
+      if (r.readyAt > now) continue;
+      this.responding.splice(i, 1);
+      r.stamps.detokDone = r.readyAt;
+      r.stage = "done";
+      this.allActive.delete(r);
+      this.metrics.record(r, now);
+    }
+
+    this.inflightIntegral += this.allActive.size * TICK;
+    this.metrics.tick(now, this);
+  }
+
+  /* enqueue computed-but-unsent chunks once decode prealloc is done
+     (sender waits for decode's page indices — real: KVSender init/send gating) */
+  enqueueReadyChunks(p, r){
+    if (!r.dPrealloc || !p) return;
+    while (r.chunksQueued < r.chunksComputed){
+      const toks = chunkTokens(this, r, r.chunksQueued);
+      p.link.queue.push({ req: r, bytes: toks * cellSizeOf(this.P), tokens: toks });
+      r.chunksQueued++;
+    }
+  }
+  completeTransfer(p, r, doneAt){
+    /* KVPoll.Success: prefill releases KV, decode moves req to waiting_queue */
+    p.kvUsed -= r.inputLen;
+    const ii = p.inflight.indexOf(r);
+    if (ii >= 0) p.inflight.splice(ii, 1);
+    r.stamps.transferDone = doneAt;
+    r.kvPoll = KVPOLL.Success;
+    r.stage = "d_waiting";
+    const d = r.d;
+    const ti = d.transferQ.indexOf(r);
+    if (ti >= 0) d.transferQ.splice(ti, 1);
+    d.waitingQ.push(r);
+  }
+
+  sampleGauges(){
+    let pQueue = 0, dQueue = 0, running = 0, kvPu = 0, kvPc = 0, kvDu = 0, kvDc = 0;
+    let kvDpre = 0;   // KV pre-allocated but not yet in the running batch
+    for (const p of this.pList){
+      pQueue += p.bootstrapQ.length + p.waitingQ.length;
+      kvPu += p.kvUsed; kvPc += p.maxTokens(this.P);
+    }
+    for (const d of this.dList){
+      dQueue += d.preallocQ.length + d.transferQ.length + d.waitingQ.length;
+      running += d.running.length;
+      kvDu += d.kvUsed; kvDc += d.maxTokens(this.P);
+      /* prealloc reserves only prefill KV (inputLen); decode KV grows per token
+         once the req joins running. transferQ holds reserved inputLen; a waiting
+         req still holds its inputLen unless it was retracted (KV dropped). */
+      for (const r of d.transferQ) kvDpre += r.inputLen;
+      for (const r of d.waitingQ)  kvDpre += r.retracted ? 0 : r.inputLen;
+    }
+    const dtMs = Math.max(1, this.now - this.lastGaugeAt);
+    const link = this.linkBusyMs / (dtMs * Math.max(1, this.pList.length));
+    this.linkBusyMs = 0; this.lastGaugeAt = this.now;
+    return {
+      pQueue, dQueue, running,
+      kvP: kvPc ? kvPu / kvPc : 0, kvD: kvDc ? kvDu / kvDc : 0,
+      kvDpre: kvDc ? kvDpre / kvDc : 0,
+      link: clamp(link, 0, 1),
+      inflight: this.allActive.size,
+    };
+  }
+}
+
+/* ====================== Headless self-test =========================== */
+function runHeadless(overrides, seconds, seed = 42){
+  const p = Object.assign({}, DEFAULTS, overrides);
+  const eng = new SimEngine(p, seed);
+  for (let ts = 0; ts < seconds * 1000; ts += 1000) eng.advance(1000);
+  return eng;
+}
+function runSelfTest(log = console.log){
+  const results = [];
+  const check = (name, cond, detail) => {
+    results.push([name, !!cond, detail]);
+    log((cond ? "PASS " : "FAIL ") + name + (detail ? "  [" + detail + "]" : ""));
+  };
+  /* tests pin the compute params to the classic manual values */
+  const base = { inputDist:"fixed", outputDist:"fixed", cacheHitRate:0,
+                 inputLenMean:2048, outputLenMean:128,
+                 prefillTokPerSec:20000,
+                 decodeMsBase:20, decodeMsPerReq:0.15 };
+
+  /* 1. low load: TPOT ≈ decode step base */
+  {
+    const e = runHeadless({...base, qps:0.5}, 90);
+    const s = e.metrics.snapshot();
+    check("tpot≈decodeStep@lowLoad",
+      s && Math.abs(s.tpot.avg - (DEFAULTS.decodeMsBase + DEFAULTS.decodeMsPerReq)) <
+           DEFAULTS.decodeMsBase * 0.3,
+      s ? "tpot=" + s.tpot.avg.toFixed(2) + "ms" : "no data");
+  }
+  /* 2. Little's law: avg in-flight ≈ arrival rate × avg E2E */
+  {
+    const e = runHeadless({...base, qps:8}, 240);
+    const s = e.metrics.snapshot();
+    const avgInflight = e.inflightIntegral / e.now;
+    const expect = 8 * s.e2e.avg / 1000;
+    check("littlesLaw", Math.abs(avgInflight - expect) / expect < 0.30,
+      "L=" + avgInflight.toFixed(1) + " λW=" + expect.toFixed(1));
+  }
+  /* 3. halving bandwidth ≈ doubles transfer component (single chunk, no overlap) */
+  {
+    const cfg = {...base, qps:1, inputLenMean:8192, chunkSize:32768, transferOverheadMs:0};
+    const a = runHeadless({...cfg, bandwidthGBs:4}, 90).metrics.snapshot();
+    const b = runHeadless({...cfg, bandwidthGBs:2}, 90).metrics.snapshot();
+    const ratio = b.bd[4] / a.bd[4];
+    check("bandwidthHalve→transfer×2", ratio > 1.7 && ratio < 2.3, "ratio=" + ratio.toFixed(2));
+  }
+  /* 4. TTFT monotone non-decreasing with QPS */
+  {
+    const t = q => runHeadless({...base, qps:q}, 120).metrics.snapshot().ttft.avg;
+    const t1 = t(2), t2 = t(8), t3 = t(24);
+    check("ttftMonotoneQPS", t2 >= t1 * 0.9 && t3 >= t2 * 0.9,
+      [t1, t2, t3].map(v => v.toFixed(0)).join("→") + "ms");
+  }
+  /* 5. token conservation + KV capacity never exceeded */
+  {
+    const e = runHeadless({...base, qps:16, kvGbP:2, kvGbD:2}, 120);
+    check("tokenConservation", e.tokenConservationOk, "");
+    check("kvNeverExceeded", e.debugMaxKvRatio <= 1.0001,
+      "maxRatio=" + e.debugMaxKvRatio.toFixed(4));
+  }
+  /* 5b. tight D KV under overload → retract_decode fires AND still bounds KV.
+     retraction must evict enough that per-step growth never overruns the pool. */
+  {
+    const e = runHeadless({...base, qps:16, kvGbD:1, outputLenMean:512}, 120);
+    check("retractionFires", e.retractTotal > 0, "retracts=" + e.retractTotal);
+    check("retractionBoundsKv", e.debugMaxKvRatio <= 1.0001,
+      "maxRatio=" + e.debugMaxKvRatio.toFixed(4));
+  }
+  /* 5c. token conservation holds even when requests are retracted & resumed
+     (tokensOut preserved across retract; each completes at exactly outputLen). */
+  {
+    const e = runHeadless({...base, qps:16, kvGbD:1, outputLenMean:512}, 120);
+    check("tokenConservationWithRetract", e.tokenConservationOk && e.retractTotal > 0,
+      "retracts=" + e.retractTotal);
+  }
+  /* 6. hit rate → 100%: prefill & transfer components collapse */
+  {
+    const a = runHeadless({...base, qps:1}, 90).metrics.snapshot();
+    const b = runHeadless({...base, qps:1, cacheHitRate:0.99}, 90).metrics.snapshot();
+    // hit-rate jitter is ±0.1 so 0.99 saturates near 1.0
+    const drop = (a.bd[3] + a.bd[4]) > 0 ? 1 - (b.bd[3] + b.bd[4]) / (a.bd[3] + a.bd[4]) : 0;
+    check("hitRate→prefill+transfer↓", drop > 0.8, "drop=" + (drop * 100).toFixed(0) + "%");
+  }
+  /* 7. tokenize ∝ input length (µs/token); detok component == detokenizeMs */
+  {
+    const e = runHeadless({...base, qps:0.5, tokenizeUsPerTok:10}, 60);
+    const s = e.metrics.snapshot();
+    const expectTok = 2048 * 10 / 1000;
+    check("tokenize∝inputLen", Math.abs(s.bd[0] - expectTok) / expectTok < 0.05,
+      "tok=" + s.bd[0].toFixed(2) + "ms expect=" + expectTok.toFixed(2) + "ms");
+    check("detokComponent", Math.abs(s.bd[6] - DEFAULTS.detokenizeMs) < 0.05,
+      "detok=" + s.bd[6].toFixed(2) + "ms");
+  }
+  /* 8. hybrid attention (MiMo): cell size uses full-attn layers only, so KV
+        capacity is layers/fullLayers × larger than counting all layers */
+  {
+    const mimo = {...DEFAULTS, modelPreset:"mimo_v25"};
+    const cell = cellSizeOf(mimo);
+    const expect = 9 * 4 * 192 * 2 * 2;          // fullLayers·kvHeads·headDim·2·dtype
+    check("hybridCellSize", cell === expect, "cell=" + cell + "B expect=" + expect + "B");
+    /* same config but counted as dense 48-layer → 48/9× bigger, fewer tokens fit */
+    const dense = cellSizeOf({...mimo, hybrid:false});
+    check("hybridFitsMoreTokens", Math.abs(dense / cell - 48 / 9) < 0.01,
+      "ratio=" + (dense / cell).toFixed(2) + " expect=" + (48 / 9).toFixed(2));
+  }
+  /* 9. smaller chunks overlap compute & transfer → lower TTFT (overhead=0) */
+  {
+    const cfg = {...base, qps:0.5, inputLenMean:16384, bandwidthGBs:2, transferOverheadMs:0};
+    const small = runHeadless({...cfg, chunkSize:1024}, 90).metrics.snapshot().ttft.avg;
+    const big = runHeadless({...cfg, chunkSize:32768}, 90).metrics.snapshot().ttft.avg;
+    check("chunkOverlapHelpsTTFT", small <= big * 1.02,
+      "small=" + small.toFixed(0) + " big=" + big.toFixed(0));
+  }
+  /* 10. bootstrap wait is gated by D pre-alloc: a tight D KV pool makes the
+         bootstrap component (bd[1]) grow vs a roomy pool (emergent, not a slider) */
+  {
+    const cfg = {...base, qps:6, inputLenMean:8192, outputLenMean:512, numP:2, numD:1};
+    const roomy = runHeadless({...cfg, kvGbD:99}, 90).metrics.snapshot();
+    const tight = runHeadless({...cfg, kvGbD:1}, 90).metrics.snapshot();
+    check("bootstrapGatedByD_KV", tight.bd[1] > roomy.bd[1] * 3 + 5,
+      "roomy=" + roomy.bd[1].toFixed(1) + "ms tight=" + tight.bd[1].toFixed(1) + "ms");
+    check("bootstrapRoomySmall", roomy.bd[1] < 20,
+      "roomyBootstrap=" + roomy.bd[1].toFixed(1) + "ms");
+  }
+  /* 11. load-balancing policies: round-robin spreads P load evenly; least-load
+         and P2C keep the max-loaded instance no worse than random under load */
+  {
+    const cfg = {...base, qps:20, numP:4, numD:4, inputLenMean:1024, kvGbP:8, kvGbD:8};
+    const spread = policy => {
+      const e = runHeadless({...cfg, lbPolicyP:policy, lbPolicyD:policy}, 60);
+      const done = e.pList.map(p => p.id);          // instances exist
+      return e.pList.length;
+    };
+    check("policiesRun4P", spread("round_robin") === 4 && spread("power_of_two") === 4, "");
+    /* under skewable load, least-load should not have higher peak queue than random */
+    const peakQ = policy => {
+      const e = runHeadless({...cfg, lbPolicyP:policy}, 60);
+      return Math.max(...e.pList.map(p => p.bootstrapQ.length + p.waitingQ.length));
+    };
+    const least = peakQ("least"), rand = peakQ("random");
+    check("leastLoad≤random+slack", least <= rand + 6,
+      "leastPeak=" + least + " randPeak=" + rand);
+  }
+  /* 12. attention term: same uncached count, longer cached prefix → slower single
+         chunk (uncached tokens attend the whole prefix, incl. cache hits). */
+  {
+    const P = {...DEFAULTS};
+    const short = chunkPrefillMs(P, { uncachedLen:512, cachedLen:0 },     0);
+    const long  = chunkPrefillMs(P, { uncachedLen:512, cachedLen:50000 }, 0);
+    check("attnSlowsLongCtx", long > short * 1.2,
+      "short=" + short.toFixed(1) + "ms long=" + long.toFixed(1) + "ms ratio=" + (long/short).toFixed(2));
+
+    /* 13. SWA window cap: once ctx≫W the SWA term is constant, so the attention
+           INCREMENT between two huge contexts equals the full-attn-only increment. */
+    const q = 512;
+    const gemm = q / P.prefillTokPerSec * 1000;
+    const d1 = chunkPrefillMs(P, { uncachedLen:q, cachedLen:200000 }, 0) - gemm;
+    const d2 = chunkPrefillMs(P, { uncachedLen:q, cachedLen:300000 }, 0) - gemm;
+    const effFlops = P.prefillTokPerSec * 2 * (P.activeB * 1e9);
+    const coefFull = 4 * P.qHeads * P.headDim * P.fullLayers / effFlops * 1000;
+    const expectFullOnly = coefFull * q * 100000;
+    check("swaWindowCaps", Math.abs((d2 - d1) - expectFullOnly) < expectFullOnly * 0.01,
+      "Δattn=" + (d2 - d1).toFixed(2) + "ms fullOnly=" + expectFullOnly.toFixed(2) + "ms");
+  }
+  const failed = results.filter(r => !r[1]).length;
+  log(failed === 0 ? "ALL " + results.length + " CHECKS PASSED"
+                   : failed + "/" + results.length + " CHECKS FAILED");
+  return failed === 0;
+}
+/*ENGINE-END*/
+
+/* ========================== Renderer ================================= */
+const COLORS = {
+  Bootstrapping:"#f0b429", WaitingForInput:"#7d8590", Transferring:"#4ea1ff",
+  Success:"#3fb950", decoding:"#bc8cff", tokenize:"#39c5cf", retract:"#f85149",
+  bd:["#39c5cf","#f0b429","#7d8590","#f0883e","#4ea1ff","#bc8cff","#3fb950"],
+};
+function kvGaugeColor(r){ return r < 0.7 ? "#3fb950" : (r < 0.9 ? "#f0b429" : "#f85149"); }
+const BOX_H = 118, BOX_GAP = 12;   // fixed instance-box size (does not scale with count)
+const CLIENT_VIS_MS = 60;          // cosmetic client→router inbound-hop travel time
+const FANOUT_VIS_MS = 60;          // cosmetic router→P/D concurrent-dispatch travel time
+
+class Renderer {
+  constructor(cv){ this.cv = cv; this.ctx = cv.getContext("2d"); this.W = 0; this.H = 0; }
+  resize(sim){
+    const w = this.cv.parentElement.clientWidth || 800;
+    const n = Math.max(sim.pList.length, sim.dList.length);
+    /* fixed instance-box height; canvas grows to fit n boxes rather than
+       shrinking the boxes */
+    const h = Math.max(420, n * (BOX_H + BOX_GAP) - BOX_GAP + 70);
+    const dpr = window.devicePixelRatio || 1;
+    const pw = Math.round(w * dpr), ph = Math.round(h * dpr);
+    if (this.cv.width !== pw || this.cv.height !== ph){
+      this.cv.width = pw; this.cv.height = ph;
+      this.cv.style.height = h + "px";
+    }
+    this.W = w; this.H = h; this.dpr = dpr;
+  }
+
+  draw(sim){
+    const ctx = this.ctx, W = this.W, H = this.H, now = sim.now;
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    ctx.font = "10px sans-serif";
+    const midY = H / 2;
+
+    /* ---- node rects: client → router → {P col, D col} → back to client ---- */
+    const nodeH = 46;
+    const nd = (fx, fw, name) => ({ x: fx * W, y: midY - nodeH / 2, w: fw * W, h: nodeH, name });
+    const client = nd(.015, .065, t("n.client"));
+    const router = nd(.125, .075, t("n.router"));
+    const areaT = 30, areaB = H - 40;
+    /* fixed box height; the column is vertically centered in the available area.
+       box width has a pixel floor so the inner content (drawn at fixed offsets)
+       never gets squashed when the canvas narrows (e.g. sidebar expanded). */
+    const boxW = Math.max(W * .21, 150);
+    const boxCol = (bx, list) => {
+      const n = list.length;
+      const totH = n * BOX_H + (n - 1) * BOX_GAP;
+      const y0 = areaT + Math.max(0, (areaB - areaT - totH) / 2);
+      return list.map((_, i) => ({ x: bx, y: y0 + i * (BOX_H + BOX_GAP), w: boxW, h: BOX_H }));
+    };
+    /* P stays after the router; D sits to the right of P using some of the
+       right-hand space, but is clamped so it never overlaps P nor clips the
+       right edge. */
+    const pX = W * .27;
+    const dX = Math.min(Math.max(W * .68, pX + boxW + 40), W - 16 - boxW);
+    const pRects = boxCol(pX, sim.pList);
+    const dRects = boxCol(dX, sim.dList);
+
+    /* ---- edges (under everything) ---- */
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "#2d3646";
+    ctx.beginPath(); ctx.moveTo(client.x + client.w, midY); ctx.lineTo(router.x, midY); ctx.stroke();
+    const curve = (x1, y1, x2, y2, style, width) => {
+      ctx.strokeStyle = style || "#2d3646"; ctx.lineWidth = width || 1;
+      ctx.beginPath(); ctx.moveTo(x1, y1);
+      const mx = (x1 + x2) / 2;
+      ctx.bezierCurveTo(mx, y1, mx, y2, x2, y2);
+      ctx.stroke();
+    };
+    /* router fans out to P AND D concurrently (mini_lb asyncio.gather):
+       red beziers → P boxes, blue beziers → D boxes. Both connect from the
+       router's right-edge midpoint to the midpoint of each box's left edge. */
+    ctx.globalAlpha = 0.7;
+    for (const pr of pRects)
+      curve(router.x + router.w, midY, pr.x, pr.y + pr.h / 2, "#f85149", 1.3);
+    for (const dr of dRects)
+      curve(router.x + router.w, midY, dr.x, dr.y + dr.h / 2, "#4ea1ff", 1.3);
+    ctx.globalAlpha = 1;
+    for (const pr of pRects) for (const dr of dRects)
+      curve(pr.x + pr.w, pr.y + pr.h / 2, dr.x, dr.y + dr.h / 2, "#232c3b", 1);
+    /* dashed response path: D DetokenizerManager streams tokens back to the
+       router, which relays them to the client (mini_lb returns the decode
+       server's response). Routed along a bottom lane just below the boxes:
+       D ↓ → lane → router underside → up into router; then router ↓ → client. */
+    const boxBottom = Math.max(
+      pRects.length ? pRects[pRects.length - 1].y + BOX_H : midY,
+      dRects.length ? dRects[dRects.length - 1].y + BOX_H : midY);
+    const respY = Math.min(H - 10, boxBottom + 40);
+    const routerCx = router.x + router.w / 2;
+    const respPath = dr => [
+      { x: dr.x + dr.w / 2, y: dr.y + dr.h },
+      { x: dr.x + dr.w / 2, y: respY },
+      { x: routerCx, y: respY },
+      { x: routerCx, y: router.y + router.h },
+    ];
+    ctx.strokeStyle = "#3d4a5e"; ctx.setLineDash([5, 4]); ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    for (const dr of dRects){
+      const pts = respPath(dr);
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let k = 1; k < pts.length; k++) ctx.lineTo(pts[k].x, pts[k].y);
+    }
+    ctx.stroke();
+    /* router → client leg: a short dashed line just below the solid request
+       line, spanning only client↔router (never under the P column). */
+    const relayY = midY + 12;
+    ctx.beginPath();
+    ctx.moveTo(router.x, relayY);
+    ctx.lineTo(client.x + client.w, relayY);
+    ctx.stroke(); ctx.setLineDash([]);
+    this._respPath = respPath; this._respY = respY; this._routerCx = routerCx;
+    this._relayY = relayY;
+
+    /* ---- transfer packets on P→D links ---- */
+    for (let i = 0; i < sim.pList.length; i++){
+      const p = sim.pList[i], link = p.link, pr = pRects[i];
+      if (!link.current) continue;
+      const di = sim.dList.indexOf(link.current.req.d);
+      if (di < 0) continue;
+      const dr = dRects[di];
+      const x1 = pr.x + pr.w, y1 = pr.y + pr.h / 2, x2 = dr.x, y2 = dr.y + dr.h / 2;
+      const prog = clamp((now - link.startAt) / Math.max(1, link.doneAt - link.startAt), 0, 1);
+      /* point along the same bezier */
+      const mx = (x1 + x2) / 2;
+      const bez = tt => {
+        const u = 1 - tt;
+        return {
+          x: u*u*u*x1 + 3*u*u*tt*mx + 3*u*tt*tt*mx + tt*tt*tt*x2,
+          y: u*u*u*y1 + 3*u*u*tt*y1 + 3*u*tt*tt*y2 + tt*tt*tt*y2,
+        };
+      };
+      const mb = link.current.bytes / 2**20;
+      const lw = clamp(2 + Math.log2(1 + mb) * 1.1, 2, 11);
+      ctx.strokeStyle = COLORS.Transferring; ctx.lineWidth = lw; ctx.lineCap = "round";
+      ctx.globalAlpha = 0.9;
+      ctx.beginPath();
+      const t0 = Math.max(0, prog - 0.07), pts = 8;
+      let m0 = bez(t0); ctx.moveTo(m0.x, m0.y);
+      for (let k = 1; k <= pts; k++){ const q = bez(t0 + (prog - t0) * k / pts); ctx.lineTo(q.x, q.y); }
+      ctx.stroke();
+      ctx.globalAlpha = 1; ctx.lineCap = "butt";
+      /* queued transfers badge */
+      if (link.queue.length){
+        ctx.fillStyle = COLORS.Transferring;
+        ctx.fillText("⇥" + link.queue.length, x1 + 4, y1 - 6);
+      }
+    }
+
+    /* ---- simple node boxes ---- */
+    const drawNode = (r) => {
+      this.rr(r.x, r.y, r.w, r.h, 8);
+      ctx.fillStyle = "#1c2330"; ctx.fill();
+      ctx.strokeStyle = "#2d3646"; ctx.lineWidth = 1; ctx.stroke();
+      ctx.fillStyle = "#e6edf3"; ctx.textAlign = "center"; ctx.font = "11px sans-serif";
+      ctx.fillText(r.name, r.x + r.w / 2, r.y + r.h / 2 + 4);
+      ctx.textAlign = "left";
+    };
+    drawNode(client); drawNode(router);
+
+    /* ---- dots: new requests travelling client → router (top request line),
+       then router fanning out to the assigned P (red) and D (blue) boxes.
+       Cosmetic windows; the request is already queued in the engine, this just
+       visualizes the inbound hop + concurrent dispatch. ---- */
+    const bezPoint = (x1, y1, x2, y2, tt) => {
+      const mx = (x1 + x2) / 2, u = 1 - tt;
+      return {
+        x: u*u*u*x1 + 3*u*u*tt*mx + 3*u*tt*tt*mx + tt*tt*tt*x2,
+        y: u*u*u*y1 + 3*u*u*tt*y1 + 3*u*tt*tt*y2 + tt*tt*tt*y2,
+      };
+    };
+    for (const r of sim.allActive){
+      const age = now - r.stamps.recv;
+      if (age < 0) continue;
+      if (age <= CLIENT_VIS_MS){                       // client → router leg
+        const prog = age / CLIENT_VIS_MS;
+        const x = client.x + client.w + (router.x - client.x - client.w) * prog;
+        this.dot(x, midY, 4, COLORS.tokenize);
+      } else if (age <= CLIENT_VIS_MS + FANOUT_VIS_MS){ // router → P and → D
+        const prog = (age - CLIENT_VIS_MS) / FANOUT_VIS_MS;
+        const pi = sim.pList.indexOf(r.p), di = sim.dList.indexOf(r.d);
+        const rx = router.x + router.w;
+        if (pi >= 0){
+          const pr = pRects[pi], pt = bezPoint(rx, midY, pr.x, pr.y + pr.h / 2, prog);
+          this.dot(pt.x, pt.y, 3.5, "#f85149");
+        }
+        if (di >= 0){
+          const dr = dRects[di], pt = bezPoint(rx, midY, dr.x, dr.y + dr.h / 2, prog);
+          this.dot(pt.x, pt.y, 3.5, "#4ea1ff");
+        }
+      }
+    }
+
+    /* ---- dots: responses streaming back D → router/client (bottom path) ---- */
+    for (const r of sim.responding){
+      const di = sim.dList.indexOf(r.d);
+      if (di < 0) continue;
+      const dr = dRects[di];
+      /* response streams D → router → client; animate the dot across the whole
+         two-leg polyline over the detokenize window */
+      const dToRouter = this._respPath(dr);
+      /* then the short relay leg router → client (below the request line) */
+      const routerToClient = [
+        { x: this._routerCx, y: router.y + router.h },
+        { x: router.x, y: this._relayY },
+        { x: client.x + client.w, y: this._relayY },
+      ];
+      const pts = dToRouter.concat(routerToClient);
+      const prog = clamp(1 - (r.readyAt - now) / Math.max(1, sim.P.detokenizeMs), 0, 1);
+      const pt = this.pathPoint(pts, prog);
+      this.dot(pt.x, pt.y, 4, COLORS.tokenize);
+    }
+
+    /* ---- instance boxes ---- */
+    for (let i = 0; i < sim.pList.length; i++)
+      this.drawPrefill(sim, sim.pList[i], pRects[i], i, now);
+    for (let i = 0; i < sim.dList.length; i++)
+      this.drawDecode(sim, sim.dList[i], dRects[i], i, now);
+
+    /* ---- legend ---- */
+    const legend = [
+      ["tokenize", COLORS.tokenize], ["Bootstrapping", COLORS.Bootstrapping],
+      ["WaitingForInput", COLORS.WaitingForInput], ["Transferring", COLORS.Transferring],
+      ["Success", COLORS.Success], ["decoding", COLORS.decoding], ["retract", COLORS.retract],
+    ];
+    let lx = 12;
+    ctx.font = "10px sans-serif";
+    for (const [k, c] of legend){
+      this.dot(lx, 14, 4, c);
+      ctx.fillStyle = "#8b98a9";
+      const label = t("lg." + k);
+      ctx.fillText(label, lx + 8, 17);
+      lx += 16 + ctx.measureText(label).width + 10;
+    }
+  }
+
+  drawPrefill(sim, p, r, idx, now){
+    const ctx = this.ctx, P = sim.P;
+    this.instanceFrame(r, t("n.prefill") + " " + p.id + (p.draining ? " ⏳" : ""));
+    /* TokenizerManager: requests still tokenizing on this instance */
+    const tokCount = p.bootstrapQ.reduce((s, q) => s + (q.stamps.tokenized > now ? 1 : 0), 0);
+    let y = r.y + 26;
+    this.queueRow(r, y, "q.tok", tokCount, COLORS.tokenize); y += 15;
+    this.queueRow(r, y, "q.bootstrap", p.bootstrapQ.length - tokCount, COLORS.Bootstrapping); y += 15;
+    this.queueRow(r, y, "q.waiting", p.waitingQ.length, COLORS.WaitingForInput); y += 15;
+    /* running: chunk progress bar for the active prefill slot */
+    const bx = r.x + 66, bw = r.w - 74;
+    const slots = p.slots.length ? p.slots : [null];
+    for (const slot of slots){
+      ctx.fillStyle = "#8b98a9";
+      ctx.fillText(t("q.prefilling"), r.x + 8, y + 8);
+      this.rr(bx, y, bw, 10, 3); ctx.fillStyle = "#0d1117"; ctx.fill();
+      if (slot){
+        const req = slot.req;
+        const dur = chunkPrefillMs(P, req, Math.min(req.chunksComputed, req.chunksTotal - 1));
+        const frac = clamp(1 - (slot.busyUntil - now) / Math.max(1, dur), 0, 1);
+        const prog = clamp((req.chunksComputed + frac) / req.chunksTotal, 0, 1);
+        this.rr(bx, y, bw * prog, 10, 3); ctx.fillStyle = "#f0883e"; ctx.fill();
+        ctx.fillStyle = "#e6edf3"; ctx.font = "9px sans-serif";
+        ctx.fillText(req.uncachedLen + " tok · " + req.chunksComputed + "/" + req.chunksTotal, bx + 3, y + 8);
+        ctx.font = "10px sans-serif";
+      }
+      y += 15;
+    }
+    this.queueRow(r, y, "q.inflight", p.inflight.length, COLORS.Transferring);
+    this.kvGauge(r, p.kvUsed, p.maxTokens(P));
+  }
+
+  drawDecode(sim, d, r, idx, now){
+    const ctx = this.ctx, P = sim.P;
+    this.instanceFrame(r, t("n.decode") + " " + d.id + (d.draining ? " ⏳" : ""));
+    /* red glow on the frame briefly after a retraction (KV pressure) */
+    if (now - d.retractGlow < 500){
+      const a = 1 - (now - d.retractGlow) / 500;
+      this.rr(r.x, r.y, r.w, r.h, 8);
+      ctx.strokeStyle = "rgba(248,81,73," + (0.2 + 0.6 * a).toFixed(2) + ")";
+      ctx.lineWidth = 2; ctx.stroke(); ctx.lineWidth = 1;
+    }
+    /* ntr readout (admission reserve) top-right of the box */
+    ctx.fillStyle = "#5a6675"; ctx.font = "8px sans-serif";
+    const ntrTxt = "ntr " + d.ntr.toFixed(2);
+    ctx.fillText(ntrTxt, r.x + r.w - 8 - ctx.measureText(ntrTxt).width, r.y + 27);
+    ctx.font = "10px sans-serif";
+    /* TokenizerManager: D tokenizes the same input, in parallel with P */
+    const tokCount = d.preallocQ.reduce((s, q) => s + (q.stamps.tokenized > now ? 1 : 0), 0);
+    let y = r.y + 26;
+    this.queueRow(r, y, "q.tok", tokCount, COLORS.tokenize); y += 15;
+    this.queueRow(r, y, "q.prealloc", d.preallocQ.length - tokCount, COLORS.Bootstrapping); y += 15;
+    this.queueRow(r, y, "q.transfer", d.transferQ.length, COLORS.Transferring); y += 15;
+    /* waiting_queue: split fresh (Success) vs retracted (recompute) requests */
+    const nRetract = d.waitingQ.reduce((s, q) => s + (q.retracted ? 1 : 0), 0);
+    this.queueRow(r, y, "q.waiting", d.waitingQ.length - nRetract, COLORS.Success);
+    if (nRetract > 0){
+      ctx.fillStyle = COLORS.retract; ctx.font = "9px sans-serif";
+      const rt = "⟲" + nRetract;
+      ctx.fillText(rt, r.x + r.w - 8 - ctx.measureText(rt).width, y + 8);
+      ctx.font = "10px sans-serif";
+    }
+    y += 15;
+    /* running batch */
+    ctx.fillStyle = "#8b98a9";
+    ctx.fillText(t("q.running"), r.x + 8, y + 8);
+    const n = d.running.length;
+    const maxDots = Math.floor((r.w - 110) / 7);
+    for (let i = 0; i < Math.min(n, maxDots); i++)
+      this.dot(r.x + 66 + i * 7, y + 5, 2.5, COLORS.decoding);
+    ctx.fillStyle = COLORS.decoding;
+    ctx.fillText(n + "/" + P.maxRunning, r.x + r.w - 44, y + 8);
+    this.kvGauge(r, d.kvUsed, d.maxTokens(P));
+  }
+
+  instanceFrame(r, title){
+    const ctx = this.ctx;
+    this.rr(r.x, r.y, r.w, r.h, 8);
+    ctx.fillStyle = "#1c2330"; ctx.fill();
+    ctx.strokeStyle = "#2d3646"; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = "#e6edf3"; ctx.font = "bold 11px sans-serif";
+    ctx.fillText(title, r.x + 8, r.y + 15);
+    /* each server runs its own TokenizerManager → Scheduler → DetokenizerManager */
+    ctx.fillStyle = "#5a6675"; ctx.font = "8px sans-serif";
+    const sub = t("inst.pipeline");
+    ctx.fillText(sub, r.x + r.w - 8 - ctx.measureText(sub).width, r.y + 15);
+    ctx.font = "10px sans-serif";
+  }
+  pathPoint(pts, prog){
+    let total = 0;
+    const segs = [];
+    for (let i = 1; i < pts.length; i++){
+      const l = Math.hypot(pts[i].x - pts[i-1].x, pts[i].y - pts[i-1].y);
+      segs.push(l); total += l;
+    }
+    let rem = clamp(prog, 0, 1) * total;
+    for (let i = 0; i < segs.length; i++){
+      if (rem <= segs[i] || i === segs.length - 1){
+        const f = segs[i] > 0 ? rem / segs[i] : 1;
+        return { x: pts[i].x + (pts[i+1].x - pts[i].x) * f,
+                 y: pts[i].y + (pts[i+1].y - pts[i].y) * f };
+      }
+      rem -= segs[i];
+    }
+    return pts[pts.length - 1];
+  }
+  queueRow(r, y, labelKey, count, color){
+    const ctx = this.ctx;
+    ctx.fillStyle = "#8b98a9";
+    ctx.fillText(t(labelKey), r.x + 8, y + 8);
+    const x0 = r.x + 66, maxDots = Math.floor((r.w - 110) / 8);
+    for (let i = 0; i < Math.min(count, maxDots); i++)
+      this.dot(x0 + i * 8, y + 5, 3, color);
+    if (count > 0){
+      ctx.fillStyle = color;
+      ctx.fillText(String(count), r.x + r.w - 26, y + 8);
+    }
+  }
+  kvGauge(r, used, cap){
+    const ctx = this.ctx;
+    const y = r.y + r.h - 12, x = r.x + 8, w = r.w - 16;
+    const ratio = clamp(used / Math.max(1, cap), 0, 1);
+    this.rr(x, y, w, 6, 3); ctx.fillStyle = "#0d1117"; ctx.fill();
+    if (ratio > 0){ this.rr(x, y, Math.max(2, w * ratio), 6, 3); ctx.fillStyle = kvGaugeColor(ratio); ctx.fill(); }
+    ctx.fillStyle = "#8b98a9"; ctx.font = "9px sans-serif";
+    ctx.fillText("KV " + (ratio * 100).toFixed(0) + "%", x + w - 42, y - 2);
+    ctx.font = "10px sans-serif";
+  }
+  dot(x, y, rad, color){
+    const ctx = this.ctx;
+    ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2);
+    ctx.fillStyle = color; ctx.fill();
+  }
+  rr(x, y, w, h, rad){
+    const ctx = this.ctx;
+    rad = Math.min(rad, h / 2, w / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + rad, y);
+    ctx.arcTo(x + w, y, x + w, y + h, rad);
+    ctx.arcTo(x + w, y + h, x, y + h, rad);
+    ctx.arcTo(x, y + h, x, y, rad);
+    ctx.arcTo(x, y, x + w, y, rad);
+    ctx.closePath();
+  }
+}
+
+/* ===================== Sparklines & breakdown ======================== */
+function drawSpark(cv, data, color){
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth || 160, h = cv.clientHeight || 34;
+  if (cv.width !== Math.round(w * dpr)){ cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  let max = -Infinity, any = false;
+  for (const v of data) if (!Number.isNaN(v)){ any = true; if (v > max) max = v; }
+  if (!any) return;
+  if (max <= 0) max = 1;
+  const n = data.length, pad = 2;
+  ctx.strokeStyle = color; ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  let pen = false, lastX = 0, lastY = 0;
+  for (let i = 0; i < n; i++){
+    const v = data[i];
+    if (Number.isNaN(v)){ pen = false; continue; }
+    const x = n > 1 ? (i / (n - 1)) * (w - pad * 2) + pad : w / 2;
+    const y = h - pad - (v / max) * (h - pad * 2);
+    if (!pen){ ctx.moveTo(x, y); pen = true; } else ctx.lineTo(x, y);
+    lastX = x; lastY = y;
+  }
+  ctx.stroke();
+  ctx.beginPath(); ctx.arc(lastX, lastY, 2, 0, Math.PI * 2);
+  ctx.fillStyle = color; ctx.fill();
+}
+
+function drawBreakdown(cv, bd){
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth || 600, h = cv.clientHeight || 86;
+  if (cv.width !== Math.round(w * dpr)){ cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  ctx.font = "10px sans-serif";
+  if (!bd){ ctx.fillStyle = "#8b98a9"; ctx.fillText("…", 6, 20); return; }
+  const total = bd.reduce((a, b) => a + Math.max(0, b), 0) || 1;
+  let x = 0;
+  const barY = 6, barH = 24;
+  for (let i = 0; i < BD_KEYS.length; i++){
+    const seg = Math.max(0, bd[i]) / total * w;
+    ctx.fillStyle = COLORS.bd[i];
+    ctx.fillRect(x, barY, Math.max(seg, 0), barH);
+    if (seg > 46){
+      ctx.fillStyle = "#04121f"; ctx.font = "bold 10px sans-serif";
+      ctx.fillText(fmtMs(bd[i]), x + 4, barY + 16);
+      ctx.font = "10px sans-serif";
+    }
+    x += seg;
+  }
+  /* legend */
+  let lx = 2, ly = barY + barH + 18;
+  for (let i = 0; i < BD_KEYS.length; i++){
+    const label = t("bd." + BD_KEYS[i]) + " " + fmtMs(bd[i]);
+    const lw = 12 + ctx.measureText(label).width + 14;
+    if (lx + lw > w){ lx = 2; ly += 16; }
+    ctx.fillStyle = COLORS.bd[i]; ctx.fillRect(lx, ly - 8, 8, 8);
+    ctx.fillStyle = "#8b98a9"; ctx.fillText(label, lx + 12, ly);
+    lx += lw;
+  }
+  ctx.fillStyle = "#e6edf3"; ctx.font = "bold 11px sans-serif";
+  ctx.fillText("TTFT ≈ " + fmtMs(total), Math.max(2, w - 110), barY + 16);
+}
+
+function fmtMs(v){
+  if (v === undefined || v === null || Number.isNaN(v)) return "—";
+  if (v >= 10000) return (v / 1000).toFixed(1) + " s";
+  if (v >= 100) return v.toFixed(0) + " ms";
+  return v.toFixed(1) + " ms";
+}
+function fmtPct(v){ return Number.isNaN(v) ? "—" : (v * 100).toFixed(0) + "%"; }
+function fmtNum(v){ return Number.isNaN(v) ? "—" : (v >= 100 ? v.toFixed(0) : v.toFixed(1)); }
+
+/* ====================== Live app state & UI ========================= */
+const P = Object.assign({}, DEFAULTS);
+const sim = new SimEngine(P, (Math.random() * 1e9) | 0);
+const renderer = new Renderer(document.getElementById("flow"));
+let paused = false, timeScale = 1;
+
+const METRIC_DEFS = [
+  { key:"ttft", series:"ttft", color:"#4ea1ff",
+    val:(s,l)=>fmtMs(s ? s.ttft.avg : NaN),
+    sub:(s,l)=>s ? "p50 " + fmtMs(s.ttft.p50) + " · p99 " + fmtMs(s.ttft.p99) : "" },
+  { key:"tpot", series:"tpot", color:"#bc8cff",
+    /* avg + p50/p99 all over the recent window (see snapshot windowMs) */
+    val:(s,l)=>fmtMs(s ? s.tpot.avg : NaN),
+    sub:(s,l)=>s ? "p50 " + fmtMs(s.tpot.p50) + " · p99 " + fmtMs(s.tpot.p99) : "" },
+  { key:"e2e", series:"e2e", color:"#39c5cf",
+    val:(s,l)=>fmtMs(s ? s.e2e.avg : NaN),
+    sub:(s,l)=>s ? "p99 " + fmtMs(s.e2e.p99) : "" },
+  { key:"rps", series:"rps", color:"#3fb950",
+    val:(s,l)=>fmtNum(seriesMean("rps", 10)) + " ", unit:"u.reqs",
+    sub:()=>"" },
+  { key:"tps", series:"tps", color:"#3fb950",
+    val:(s,l)=>fmtNum(seriesMean("tps", 10)) + " ", unit:"u.toks",
+    sub:()=>"" },
+  { key:"queue", series:"pQueue", color:"#7d8590",
+    val:(s,l)=>fmtNum(l("pQueue")) + " / " + fmtNum(l("dQueue")),
+    sub:()=>"" },
+  { key:"running", series:"running", color:"#bc8cff",
+    val:(s,l)=>fmtNum(l("running")), sub:()=>"" },
+  { key:"inflight", series:"inflight", color:"#39c5cf",
+    val:(s,l)=>fmtNum(l("inflight")), sub:()=>"" },
+  { key:"kvP", series:"kvP", color:"#f0883e",
+    val:(s,l)=>fmtPct(l("kvP")), sub:()=>"" },
+  { key:"kvD", series:"kvD", color:"#f0883e",
+    val:(s,l)=>fmtPct(l("kvD")),
+    sub:(s,l)=>t("m.kvDpre.sub") + " " + fmtPct(l("kvDpre")) },
+  { key:"kvDpre", series:"kvDpre", color:"#d29922",
+    val:(s,l)=>fmtPct(l("kvDpre")), sub:()=>"" },
+  { key:"dHandshake", series:"dHandshake", color:"#7ee787", unit:"u.ms",
+    val:(s,l)=>fmtMs(s && s.dHandshake ? s.dHandshake.avg : NaN),
+    sub:(s)=>s && s.dHandshake ? "p99 " + fmtMs(s.dHandshake.p99) : "" },
+  { key:"link", series:"link", color:"#4ea1ff",
+    val:(s,l)=>fmtPct(l("link")), sub:()=>"" },
+];
+
+function seriesMean(k, lastN){
+  const m = sim.metrics;
+  let sum = 0, n = 0;
+  for (let back = 1; back <= Math.min(lastN, m.seriesCount); back++){
+    const v = m.series[k][(m.seriesHead - back + SERIES_LEN) % SERIES_LEN];
+    if (!Number.isNaN(v)){ sum += v; n++; }
+  }
+  return n ? sum / n : NaN;
+}
+function lastSeriesVal(k){
+  const m = sim.metrics;
+  for (let back = 1; back <= 5; back++){
+    const idx = (m.seriesHead - back + SERIES_LEN) % SERIES_LEN;
+    if (m.seriesCount >= back && !Number.isNaN(m.series[k][idx])) return m.series[k][idx];
+  }
+  return NaN;
+}
+
+function buildMetricCards(){
+  const grid = document.getElementById("metrics");
+  grid.innerHTML = "";
+  for (const def of METRIC_DEFS){
+    const card = document.createElement("div");
+    card.className = "mcard";
+    card.innerHTML =
+      '<div class="mtitle" data-i18n="m.' + def.key + '"></div>' +
+      '<div class="mval"><span id="mv_' + def.key + '">—</span>' +
+      (def.unit ? ' <small data-i18n="' + def.unit + '"></small>' : "") + "</div>" +
+      '<div class="msub" id="ms_' + def.key + '"></div>' +
+      '<canvas id="mc_' + def.key + '"></canvas>';
+    grid.appendChild(card);
+  }
+}
+
+const METRIC_WINDOW_MS = 10000;   // latency cards average over the last 10 s
+function updatePanels(){
+  const snap = sim.metrics.snapshot(sim.now, METRIC_WINDOW_MS);
+  for (const def of METRIC_DEFS){
+    document.getElementById("mv_" + def.key).textContent = def.val(snap, lastSeriesVal);
+    document.getElementById("ms_" + def.key).textContent = def.sub(snap, lastSeriesVal);
+    drawSpark(document.getElementById("mc_" + def.key),
+              sim.metrics.latestSeries(def.series), def.color);
+  }
+  drawBreakdown(document.getElementById("bd"), snap ? sim.metrics.recentBreakdown(10) : null);
+  updateKvInfo();
+  document.getElementById("simClock").textContent = "t = " + (sim.now / 1000).toFixed(1) + " s";
+}
+
+/* --------------------------- sidebar -------------------------------- */
+function buildSidebar(){
+  const el = document.getElementById("sidebar");
+  el.innerHTML = "";
+  for (const g of GROUPS){
+    const div = document.createElement("div");
+    div.className = "pgroup";
+    const h = document.createElement("h3");
+    h.dataset.i18n = "g." + g;
+    div.appendChild(h);
+    for (const def of PARAM_DEFS.filter(d => d.group === g)) div.appendChild(buildRow(def));
+    if (g === "kv"){
+      const info = document.createElement("div");
+      info.className = "pinfo"; info.id = "kvInfo";
+      div.appendChild(info);
+    }
+    el.appendChild(div);
+  }
+}
+function buildRow(def){
+  const row = document.createElement("div");
+  row.className = "prow"; row.id = "row_" + def.key;
+  const lab = document.createElement("div");
+  lab.className = "plabel";
+  const nm = document.createElement("span");
+  nm.className = "pname"; nm.dataset.i18n = "p." + def.key;
+  lab.appendChild(nm);
+  if (def.type !== "select"){
+    const val = document.createElement("span");
+    val.className = "pval"; val.id = "val_" + def.key;
+    lab.appendChild(val);
+  }
+  row.appendChild(lab);
+  if (def.type === "toggle"){
+    const btn = document.createElement("button");
+    btn.id = "in_" + def.key; btn.style.width = "100%";
+    const paint = () => {
+      btn.classList.toggle("active", !!P[def.key]);
+      btn.textContent = t(P[def.key] ? "toggle.on" : "toggle.off");
+    };
+    paint();
+    btn.addEventListener("click", () => {
+      P[def.key] = !P[def.key];
+      paint(); refreshInputs();
+    });
+    row.appendChild(btn);
+  } else if (def.type === "select"){
+    const sel = document.createElement("select");
+    sel.id = "in_" + def.key;
+    for (const opt of def.options){
+      const o = document.createElement("option");
+      o.value = opt; o.dataset.i18n = def.i18nPrefix + opt;
+      sel.appendChild(o);
+    }
+    sel.value = P[def.key];
+    sel.addEventListener("change", () => {
+      P[def.key] = sel.value;
+      if (def.key === "modelPreset") applyModelPreset(sel.value);
+      if (def.key === "gpu") applyGpuPreset(sel.value);
+    });
+    row.appendChild(sel);
+  } else {
+    const inp = document.createElement("input");
+    inp.type = "range"; inp.id = "in_" + def.key;
+    if (def.steps){                                 // discrete: slider = array index
+      inp.min = 0; inp.max = def.steps.length - 1; inp.step = 1;
+      inp.value = nearestStepIdx(def, P[def.key]);
+    } else if (def.log){
+      inp.min = 0; inp.max = LOG_STEPS; inp.step = 1;
+      inp.value = logValToSlider(def, P[def.key]);
+    } else {
+      inp.min = def.min; inp.max = def.max; inp.step = def.step;
+      inp.value = P[def.key];
+    }
+    inp.addEventListener("input", () => {
+      P[def.key] = def.steps ? def.steps[parseInt(inp.value)]
+                 : def.log ? logSliderToVal(def, parseFloat(inp.value)) : parseFloat(inp.value);
+      document.getElementById("val_" + def.key).textContent = def.fmt(P[def.key]);
+      if (["layers","kvHeads","headDim","dtypeBytes"].includes(def.key)){ P.modelPreset = "custom"; syncSelect("modelPreset"); }
+      if (["kvGbP","kvGbD"].includes(def.key)){ P.gpu = "custom"; syncSelect("gpu"); }
+    });
+    row.appendChild(inp);
+  }
+  return row;
+}
+function applyModelPreset(name){
+  /* tolerate bogus names (e.g. a bad ?modelPreset= URL value) instead of crashing */
+  if (name !== "custom" && !MODEL_PRESETS[name]) name = DEFAULTS.modelPreset;
+  P.modelPreset = name;
+  if (name !== "custom"){
+    const m = MODEL_PRESETS[name];
+    P.layers = m.layers; P.kvHeads = m.kvHeads; P.headDim = m.headDim;
+    P.dtypeBytes = m.dtypeBytes; P.mla = !!m.mla;
+    P.hybrid = !!m.hybrid; P.fullLayers = m.fullLayers || m.layers;
+    P.activeB = m.activeB; P.qHeads = m.qHeads || 32;
+    P.swaWindow = m.hybrid ? (m.swaWindow || 0) : 0;
+    if (m.mla){ P.kvLoraRank = m.kvLoraRank; P.qkRope = m.qkRope; }
+  } else {
+    P.mla = false; P.hybrid = false; P.swaWindow = 0;
+  }
+  refreshInputs();
+}
+function applyGpuPreset(name){
+  if (name !== "custom"){
+    const kv = gpuKvBudget(GPU_PRESETS[name].hbm);
+    P.kvGbP = kv; P.kvGbD = kv;
+  }
+  refreshInputs();
+}
+function syncSelect(key){
+  const sel = document.getElementById("in_" + key);
+  if (sel) sel.value = P[key];
+}
+function refreshInputs(){
+  for (const def of PARAM_DEFS){
+    const inp = document.getElementById("in_" + def.key);
+    if (!inp) continue;
+    const row = document.getElementById("row_" + def.key);
+    if (def.type === "toggle"){
+      inp.classList.toggle("active", !!P[def.key]);
+      inp.textContent = t(P[def.key] ? "toggle.on" : "toggle.off");
+    } else {
+      inp.value = def.steps ? nearestStepIdx(def, P[def.key])
+                : def.log ? logValToSlider(def, P[def.key]) : P[def.key];
+      if (def.type !== "select")
+        document.getElementById("val_" + def.key).textContent = def.fmt(P[def.key]);
+    }
+    if (def.customOnly)
+      row.style.display = P.modelPreset === "custom" ? "" : "none";
+  }
+}
+function updateKvInfo(){
+  const cell = cellSizeOf(P);
+  const capP = Math.floor(P.kvGbP * 2**30 / cell);
+  const capD = Math.floor(P.kvGbD * 2**30 / cell);
+  const fmtTok = v => v >= 1e6 ? (v / 1e6).toFixed(2) + "M" : (v / 1e3).toFixed(0) + "k";
+  document.getElementById("kvInfo").innerHTML =
+    t("info.cell") + ": <b>" + (cell / 1024).toFixed(1) + " KB</b>" + t("info.perTok") +
+    (P.mla ? " (MLA)" : P.hybrid ? " (" + P.fullLayers + "/" + P.layers + " " + t("info.fullAttn") + ")" : "") + "<br>" +
+    t("info.capP") + ": <b>" + fmtTok(capP) + "</b> " + t("info.tokens") + " · " +
+    t("info.capD") + ": <b>" + fmtTok(capD) + "</b> " + t("info.tokens");
+}
+
+/* --------------------------- top bar -------------------------------- */
+function applyI18n(){
+  document.querySelectorAll("[data-i18n]").forEach(el => { el.textContent = t(el.dataset.i18n); });
+  document.querySelectorAll(".preset").forEach(b => {
+    b.textContent = t("preset." + b.dataset.preset);
+  });
+  updatePauseLabel();
+  document.getElementById("btnStep").textContent = t("ctl.step");
+  document.getElementById("btnReset").textContent = t("ctl.reset");
+  document.getElementById("btnLang").textContent = LANG === "zh" ? "EN" : "中文";
+  document.documentElement.lang = LANG;
+  refreshInputs();   // repaint toggle-button text (not a data-i18n node)
+}
+function updatePauseLabel(){
+  document.getElementById("btnPause").textContent = t(paused ? "ctl.resume" : "ctl.pause");
+}
+function wireTopbar(){
+  document.getElementById("btnPause").addEventListener("click", () => {
+    paused = !paused; updatePauseLabel();
+  });
+  document.getElementById("btnStep").addEventListener("click", () => {
+    if (!paused){ paused = true; updatePauseLabel(); }
+    sim.advance(100); updatePanels();
+  });
+  document.getElementById("btnReset").addEventListener("click", () => {
+    sim.reset(); updatePanels();
+  });
+  const speed = document.getElementById("speed");
+  const setSpeed = () => {
+    timeScale = Math.pow(2, parseFloat(speed.value));
+    document.getElementById("speedVal").textContent =
+      (timeScale >= 1 ? timeScale.toFixed(timeScale >= 8 ? 0 : 1) : timeScale.toFixed(2)) + "×";
+  };
+  speed.addEventListener("input", setSpeed); setSpeed();
+  document.querySelectorAll(".preset").forEach(b => {
+    b.addEventListener("click", () => {
+      Object.assign(P, PRESETS[b.dataset.preset]);
+      /* sync model-derived fields (activeB/qHeads/swaWindow/…) to the preset's
+         model — PRESETS list only the KV-relevant fields explicitly; same path
+         as ?preset= URL loading. Calls refreshInputs() internally. */
+      applyModelPreset(P.modelPreset);
+      document.querySelectorAll(".preset").forEach(x => x.classList.toggle("active", x === b));
+    });
+  });
+  document.getElementById("btnLang").addEventListener("click", () => {
+    LANG = LANG === "zh" ? "en" : "zh";
+    applyI18n(); updatePanels();
+  });
+  document.getElementById("sidebarToggle").addEventListener("click", () => {
+    document.getElementById("sidebar").classList.toggle("collapsed");
+  });
+}
+
+/* --------------------------- main loop ------------------------------ */
+let lastTs = 0, lastPanel = 0;
+function frame(ts){
+  if (!lastTs) lastTs = ts;
+  const dt = Math.min(100, ts - lastTs);
+  lastTs = ts;
+  if (!paused) sim.advance(dt * timeScale);
+  renderer.resize(sim);
+  renderer.draw(sim);
+  if (ts - lastPanel > 250){ lastPanel = ts; updatePanels(); }
+  requestAnimationFrame(frame);
+}
+
+function boot(){
+  buildSidebar();
+  buildMetricCards();
+  wireTopbar();
+  refreshInputs();
+  applyI18n();
+  /* ?preset=name&warmup=N&lang=en — scenario / fast-forward / language */
+  const qs = new URLSearchParams(location.search);
+  if (DICT[qs.get("lang")]){ LANG = qs.get("lang"); applyI18n(); }
+  const pr = qs.get("preset");
+  if (pr && PRESETS[pr]){
+    Object.assign(P, PRESETS[pr]);
+    applyModelPreset(P.modelPreset);   // fill model-derived fields (activeB/qHeads/…)
+  }
+  /* any param can be overridden via URL, e.g. ?numP=8&numD=8&qps=20 — handy for
+     sharing a specific configuration or for testing. Model/GPU presets apply
+     first; fine-grained overrides win afterwards and flip the matching preset
+     to "custom", mirroring the sidebar sliders. */
+  if (qs.has("modelPreset")) applyModelPreset(qs.get("modelPreset"));
+  if (GPU_PRESETS[qs.get("gpu")]){ P.gpu = qs.get("gpu"); applyGpuPreset(P.gpu); }
+  for (const [k, v] of qs){
+    if (k in DEFAULTS && !["preset","warmup","lang","modelPreset","gpu"].includes(k)){
+      const d = DEFAULTS[k];
+      P[k] = (typeof d === "number") ? parseFloat(v)
+           : (typeof d === "boolean") ? (v === "true" || v === "1") : v;
+      if (["layers","kvHeads","headDim","dtypeBytes"].includes(k)) P.modelPreset = "custom";
+      if (["kvGbP","kvGbD"].includes(k)) P.gpu = "custom";
+    }
+  }
+  refreshInputs();
+  const wu = parseFloat(qs.get("warmup"));
+  if (wu > 0) sim.advance(wu * 1000);
+  updatePanels();
+  requestAnimationFrame(frame);
+  console.log("%cPD-Disagg Simulator", "font-weight:bold");
+  console.log("Run runSelfTest() in this console to execute the headless invariant checks.");
+}
+window.runSelfTest = runSelfTest;
+window.addEventListener("resize", () => { /* canvas resizes on next frame */ });
+boot();
+</script>
+</body>
+</html>

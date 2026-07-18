@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; base-uri 'self'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>InferFlux — 输入吞吐计算器</title>
+<style>
+:root{
+  --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --border:#2d3646;
+  --text:#e6edf3; --muted:#8b98a9; --accent:#4ea1ff; --cyan:#39c5cf;
+  --green:#3fb950; --orange:#f0883e; --purple:#bc8cff; --red:#f85149;
+  --radius:10px;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);
+  font-family:-apple-system,"SF Pro","Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
+  font-size:13px;line-height:1.6;min-height:100vh;}
+header{display:flex;align-items:center;justify-content:space-between;
+  padding:12px 24px;border-bottom:1px solid var(--border);
+  background:var(--panel);position:sticky;top:0;z-index:10;}
+.site-title{font-size:15px;font-weight:700;}
+.site-title a{color:var(--muted);font-size:12px;font-weight:400;text-decoration:none;margin-left:10px;}
+.site-title a:hover{color:var(--accent);}
+.gh-link{display:inline-flex;align-items:center;color:var(--muted);transition:color .18s;}
+.gh-link:hover{color:var(--accent);}
+.layout{display:grid;grid-template-columns:340px 1fr;gap:0;height:calc(100vh - 45px);}
+.params{background:var(--panel);border-right:1px solid var(--border);
+  overflow-y:auto;padding:16px;}
+.results{overflow-y:auto;padding:20px 24px;}
+h2{font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;
+  letter-spacing:.06em;margin:16px 0 8px;padding-bottom:4px;
+  border-bottom:1px solid var(--border);}
+h2:first-child{margin-top:0;}
+.row{display:flex;align-items:center;justify-content:space-between;
+  padding:4px 0;gap:8px;}
+.row label{color:var(--muted);font-size:12px;white-space:nowrap;flex-shrink:0;min-width:120px;}
+.row input,.row select{background:var(--panel2);border:1px solid var(--border);
+  border-radius:5px;padding:3px 7px;color:var(--text);font-size:12px;width:100%;max-width:160px;}
+.row input:focus,.row select:focus{outline:none;border-color:var(--accent);}
+.hint{font-size:11px;color:var(--muted);margin-top:2px;margin-left:128px;}
+.section{background:var(--panel);border:1px solid var(--border);
+  border-radius:var(--radius);padding:16px 20px;margin-bottom:14px;}
+.section h3{font-size:13px;font-weight:600;margin-bottom:12px;color:var(--text);}
+.metric{display:flex;align-items:baseline;justify-content:space-between;
+  padding:6px 0;border-bottom:1px dashed var(--border);}
+.metric:last-child{border-bottom:none;}
+.metric .k{color:var(--muted);font-size:12px;}
+.metric .v{font-size:16px;font-weight:700;font-variant-numeric:tabular-nums;}
+.metric .v.big{font-size:22px;}
+.metric .v small{font-size:11px;font-weight:400;color:var(--muted);margin-left:4px;}
+.v.accent{color:var(--accent);} .v.green{color:var(--green);}
+.v.orange{color:var(--orange);} .v.purple{color:var(--purple);} .v.red{color:var(--red);}
+.bd{font-size:11px;color:var(--muted);margin-top:8px;line-height:1.7;}
+.bd code{background:var(--panel2);padding:1px 5px;border-radius:4px;color:var(--cyan);}
+.warn{color:var(--red);} .ok{color:var(--green);}
+.note{font-size:11px;color:var(--muted);margin-top:10px;padding:10px;
+  background:var(--panel2);border-radius:6px;line-height:1.7;}
+.divider{height:1px;background:var(--border);margin:10px 0;}
+</style>
+</head>
+<body>
+<header>
+  <div class="site-title">
+    输入吞吐计算器
+    <a href="index.html">← 首页</a>
+    <a href="calc-output.html">输出吞吐计算器</a>
+    <a href="pd-disagg.html">PD 分离模拟器</a>
+  </div>
+  <a class="gh-link" href="https://github.com/Abatom/inferflux" target="_blank" rel="noopener" aria-label="GitHub">
+    <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"></path></svg>
+  </a>
+</header>
+<div class="layout">
+<!-- ═══ LEFT: PARAMS ═══ -->
+<aside class="params">
+  <h2 id="h-hw">硬件</h2>
+  <div class="row"><label id="l-gpu">GPU 型号</label>
+    <select id="gpu"></select></div>
+  <div class="row"><label id="l-tp">张量并行 TP</label>
+    <select id="tp"><option>1</option><option>2</option><option>4</option><option>8</option><option>16</option></select></div>
+  <div class="row"><label id="l-dp">数据并行 DP</label>
+    <select id="dp"><option>1</option><option>2</option><option>4</option><option>8</option></select></div>
+  <div class="row"><label id="l-ep">专家并行 EP</label>
+    <input id="ep" type="number" min="1" value="1"></div>
+  <div class="hint" id="hint-ep">EP 只影响显存（不进算力公式）</div>
+  <div class="row"><label id="l-numP">Prefill 实例数</label>
+    <input id="numP" type="number" min="1" value="1"></div>
+
+  <h2 id="h-model">模型</h2>
+  <div class="row"><label id="l-model">模型预设</label>
+    <select id="model"></select></div>
+  <div class="row"><label id="l-mfu">MFU</label>
+    <input id="mfu" type="number" min="0.05" max="1" step="0.01" value="0.4"></div>
+  <div class="hint" id="hint-mfu">算力利用率，典型 0.3～0.5</div>
+  <div class="row"><label id="l-swaWindow">SWA 窗口</label>
+    <input id="swaWindow" type="number" min="0" step="128" value="128"></div>
+  <div class="hint" id="hint-swaWindow">滑窗层每 token attend 的 KV 上界；0=纯全注意力模型自动忽略</div>
+
+  <h2 id="h-workload">负载</h2>
+  <div class="row"><label id="l-inputLen">输入长度 (token)</label>
+    <input id="inputLen" type="number" min="1" value="4096"></div>
+  <div class="row"><label id="l-hitRate">缓存命中率</label>
+    <input id="hitRate" type="number" min="0" max="0.999" step="0.01" value="0.9"></div>
+  <div class="row"><label id="l-chunkSize">Chunk Prefill 大小</label>
+    <select id="chunkSize">
+      <option value="1024">1K</option>
+      <option value="2048">2K</option>
+      <option value="4096">4K</option>
+      <option value="8192" selected>8K</option>
+      <option value="16384">16K</option>
+      <option value="32768">32K</option>
+      <option value="65536">64K</option>
+    </select></div>
+  <div class="hint" id="hint-chunk">影响管线化，计算器用总时间近似</div>
+  <div class="row"><label id="l-kvFrac">KV 显存占比</label>
+    <input id="kvFrac" type="number" min="0.1" max="0.99" step="0.01" value="0.8"></div>
+  <div class="hint" id="hint-kvFrac">如 0.8 = 80% HBM 给 KV，其余给权重+激活</div>
+
+  <h2 id="h-backsolve">MFU 反推（可选）</h2>
+  <div class="row"><label id="l-obsThput">实测输入吞吐 tok/s</label>
+    <input id="obsThput" type="number" min="0" placeholder="留空则不反推" value=""></div>
+  <div class="hint" id="hint-obs">填入实测值反推实际 MFU，用于校准</div>
+</aside>
+
+<!-- ═══ RIGHT: RESULTS ═══ -->
+<section class="results">
+  <div class="section">
+    <h3 id="h-thput">吞吐</h3>
+    <div class="metric"><span class="k" id="k-inputThput">输入吞吐（含 cached）</span>
+      <span class="v big accent" id="v-inputThput">—</span></div>
+    <div class="metric"><span class="k" id="k-compThput">计算吞吐（uncached）</span>
+      <span class="v accent" id="v-compThput">—</span></div>
+    <div class="metric"><span class="k" id="k-prefillMs">单副本单请求 prefill</span>
+      <span class="v" id="v-prefillMs">—</span></div>
+    <div class="metric"><span class="k" id="k-concurrency">全系统并发（prefill 槽）</span>
+      <span class="v orange" id="v-concurrency">—</span></div>
+    <div class="bd" id="v-breakdown"></div>
+    <div class="bd" id="v-thput-note"></div>
+  </div>
+
+  <div class="section">
+    <h3 id="h-formula">MFU 公式</h3>
+    <div class="bd" id="v-formula"></div>
+  </div>
+
+  <div class="section">
+    <h3 id="h-mem">显存可行性</h3>
+    <div class="metric"><span class="k" id="k-kvBudget">KV 预算（每副本）</span>
+      <span class="v green" id="v-kvBudget">—</span></div>
+    <div class="metric"><span class="k" id="k-maxTok">KV 可容纳 token 数</span>
+      <span class="v" id="v-maxTok">—</span></div>
+    <div class="metric"><span class="k" id="k-maxReq">最大并发请求数</span>
+      <span class="v" id="v-maxReq">—</span></div>
+    <div class="metric"><span class="k" id="k-cellSize">KV cell size（每 token）</span>
+      <span class="v" id="v-cellSize">—</span></div>
+    <div class="bd" id="v-memNote"></div>
+  </div>
+
+  <div class="section" id="sec-mfu">
+    <h3 id="h-mfu-back">MFU 反推</h3>
+    <div class="metric"><span class="k" id="k-mfuGemm">GEMM MFU（实测）</span>
+      <span class="v purple" id="v-mfuGemm">—</span></div>
+    <div class="metric"><span class="k" id="k-mfuTotal">Total FLOPs MFU（含 attention）</span>
+      <span class="v purple" id="v-mfuTotal">—</span></div>
+    <div class="bd" id="v-mfuNote"></div>
+  </div>
+
+  <div class="note" id="v-assumptions"></div>
+</section>
+</div>
+<script>
+const GPU_PRESETS = {
+  a100_80g:{hbm:80,  tflops:312,  bwTBs:2.0,  label:"A100 80G"},
+  h100:    {hbm:80,  tflops:990,  bwTBs:3.35, label:"H100 80G"},
+  h200:    {hbm:141, tflops:990,  bwTBs:4.8,  label:"H200 141G"},
+  b200:    {hbm:192, tflops:2250, bwTBs:8.0,  label:"B200 192G"},
+  b300:    {hbm:288, tflops:2250, bwTBs:8.0,  label:"B300 288G"},
+  mi300x:  {hbm:192, tflops:1300, bwTBs:5.3,  label:"MI300X 192G"},
+};
+const MODEL_PRESETS = {
+  mimo_v25:    {label:"MiMo-V2.5 (hybrid)",   activeB:15.4,layers:48,fullLayers:9, kvHeads:4,headDim:192,dtypeBytes:2,hybrid:true, mla:false,qHeads:32,swaWindow:128},
+  mimo_v25_pro:{label:"MiMo-V2.5-Pro (hybrid)",activeB:44.5,layers:70,fullLayers:10,kvHeads:8,headDim:192,dtypeBytes:2,hybrid:true, mla:false,qHeads:48,swaWindow:128},
+  llama8b:     {label:"Llama-3-8B (GQA)",     activeB:8,  layers:32,kvHeads:8, headDim:128,dtypeBytes:2,hybrid:false,mla:false,qHeads:32},
+  llama70b:    {label:"Llama-3-70B (GQA)",    activeB:70, layers:80,kvHeads:8, headDim:128,dtypeBytes:2,hybrid:false,mla:false,qHeads:64},
+  qwen32b:     {label:"Qwen-32B (GQA)",       activeB:32, layers:64,kvHeads:8, headDim:128,dtypeBytes:2,hybrid:false,mla:false,qHeads:40},
+  deepseekv3:  {label:"DeepSeek-V3 (MLA)",    activeB:37, layers:61,kvHeads:1, headDim:576,dtypeBytes:2,hybrid:false,mla:true, qHeads:128,kvLoraRank:512,qkRope:64},
+};
+function cellSizeOf(m){
+  if(m.mla) return (m.kvLoraRank+m.qkRope)*m.layers*m.dtypeBytes;
+  return (m.hybrid?m.fullLayers:m.layers)*m.kvHeads*m.headDim*m.dtypeBytes*2;
+}
+function fmtK(v){
+  if(!isFinite(v)||isNaN(v)) return "—";
+  if(v>=1e9) return (v/1e9).toFixed(2)+"B";
+  if(v>=1e6) return (v/1e6).toFixed(2)+"M";
+  if(v>=1e3) return (v/1e3).toFixed(1)+"K";
+  return v.toFixed(0);
+}
+function fmtMs(v){return !isFinite(v)?"—":v>=1000?(v/1000).toFixed(2)+"s":v.toFixed(1)+"ms";}
+function fmtNum(v){return !isFinite(v)?"—":v>=100?v.toFixed(0):v.toFixed(1);}
+function fmtGB(v){return !isFinite(v)?"—":v.toFixed(1)+" GB";}
+function fmtPct(v){return !isFinite(v)?"—":(v*100).toFixed(1)+"%";}
+
+/* ══════════ core compute ══════════ */
+function compute(P){
+  const gpu = GPU_PRESETS[P.gpu], m = MODEL_PRESETS[P.model];
+  const tp = Math.max(1, P.tp), dp = Math.max(1, P.dp), ep = Math.max(1, P.ep);
+  const peak = gpu.tflops * 1e12 * tp;          // aggregate compute in a TP group
+  const activeParams = m.activeB * 1e9;
+  const uncached = P.inputLen * (1 - P.hitRate);
+  const cached   = P.inputLen * P.hitRate;
+
+  // GEMM (weight matmul): 2N FLOPs/token, TP-scaled
+  const prefillTokPerSec = peak * P.mfu / (2 * activeParams);
+  const gemmMs = uncached / prefillTokPerSec * 1000;
+
+  // attention: full-attn layers see whole prefix (O(ctx)); SWA layers cap at window (O(min(W,ctx)))
+  const fullLayers = m.hybrid ? m.fullLayers : m.layers;
+  const swaLayers  = m.hybrid ? (m.layers - m.fullLayers) : 0;
+  /* explicit 0 = window off (SWA layers attend full ctx); empty input falls
+     back to the model preset's window */
+  const swaWindow  = Number.isFinite(P.swaWindow) ? P.swaWindow : (m.swaWindow || 0);
+  const flopsPerLayerTokTok = 4 * m.qHeads * m.headDim;               // QK^T(2d)+softmax·V(2d), 单层
+  const attnMsCoefFull = flopsPerLayerTokTok * fullLayers / (peak * P.mfu) * 1000;
+  const attnMsCoefSwa  = flopsPerLayerTokTok * swaLayers  / (peak * P.mfu) * 1000;
+  const avgCtx = cached + uncached / 2;
+  const swaCtx = swaWindow > 0 ? Math.min(swaWindow, avgCtx) : avgCtx;
+  const attnMsFull = attnMsCoefFull * uncached * avgCtx;
+  const attnMsSwa  = attnMsCoefSwa  * uncached * swaCtx;
+  const attnMs = attnMsFull + attnMsSwa;
+  const attnFlopsPerTokTok = flopsPerLayerTokTok * fullLayers;        // for MFU back-solve (full-attn 主项)
+
+  const prefillMs = gemmMs + attnMs;
+  const slots = P.numP * dp;                    // concurrent prefill lanes
+  const computeThput = uncached / (prefillMs/1000) * slots;   // uncached tok/s
+  const inputThput   = computeThput / (1 - P.hitRate);        // incl cached
+
+  // memory: TP shards weights + EP shards experts → each card frees HBM for KV
+  const kvBudgetGB = gpu.hbm * tp * ep * P.kvFrac;
+  const cell = cellSizeOf(m);
+  const maxTok = kvBudgetGB * 2**30 / cell;    // GB treated as GiB (2**30), ~7% conservative
+  const maxReq = maxTok / P.inputLen;
+
+  // MFU back-solve from observed throughput + prefill utilization
+  let mfuGemm = NaN, mfuTotal = NaN, util = NaN;
+  if (P.obsThput > 0){
+    const obsUncached = P.obsThput * (1 - P.hitRate) / slots;   // per-lane uncached tok/s
+    mfuGemm = 2 * activeParams * obsUncached / peak;
+    const totalFlopsPerTok = 2 * activeParams + attnFlopsPerTokTok * avgCtx;
+    mfuTotal = totalFlopsPerTok * obsUncached / peak;
+    util = P.obsThput / inputThput;                             // observed / theoretical peak
+  }
+  return {prefillTokPerSec, gemmMs, attnMs, attnMsFull, attnMsSwa, prefillMs,
+          computeThput, inputThput, slots, kvBudgetGB, cell, maxTok, maxReq,
+          uncached, cached, avgCtx, swaCtx, swaWindow, fullLayers, swaLayers,
+          mfuGemm, mfuTotal, util, peak, activeParams, attnFlopsPerTokTok};
+}
+
+/* ══════════ read params + render ══════════ */
+function readParams(){
+  const num = id => parseFloat(document.getElementById(id).value);
+  const val = id => document.getElementById(id).value;
+  return {
+    gpu: val("gpu"), model: val("model"),
+    tp: num("tp"), dp: num("dp"), ep: num("ep"), numP: num("numP"),
+    mfu: num("mfu"), inputLen: num("inputLen"), hitRate: num("hitRate"),
+    chunkSize: num("chunkSize"), kvFrac: num("kvFrac"),
+    swaWindow: parseFloat(document.getElementById("swaWindow").value),   // NaN when empty → preset fallback
+    obsThput: parseFloat(document.getElementById("obsThput").value) || 0,
+  };
+}
+function set(id, txt){ document.getElementById(id).textContent = txt; }
+function html(id, h){ document.getElementById(id).innerHTML = h; }
+
+/* MFU 公式 + 当前参数代入 */
+function renderFormula(P, r){
+  const gpu = GPU_PRESETS[P.gpu], m = MODEL_PRESETS[P.model];
+  const peakT = gpu.tflops * P.tp;                 // 聚合峰值 TFLOPS
+  const twoN = 2 * m.activeB;                       // 2N，单位 B(十亿)
+  const fwd = peakT * 1e12 * P.mfu / (2 * m.activeB * 1e9);   // = prefillTokPerSec
+  html("v-formula",
+    `<b>定义</b>： MFU = 实际达到 FLOPs ÷ 硬件峰值 FLOPs`
+    + `<br>每 token GEMM 运算 ≈ <code>2N</code>（N=激活参数，一次乘加=2 FLOPs）`
+    + `<div class="divider"></div>`
+    + `<b>正向</b>（单 P 节点 GEMM 天花板）： tok/s = 峰值TFLOPS × MFU ÷ 2N`
+    + `<br>= (${gpu.tflops} × TP${P.tp}) × ${P.mfu} ÷ (2 × ${m.activeB}B)`
+    + ` = <code>${gpu.tflops}×${P.tp}×${P.mfu} / ${twoN}</code> TFLOP·s⁻¹/(B FLOP)`
+    + ` ≈ <code class="ok">${fmtK(fwd)} tok/s</code>（即上方「单卡×TP prefill 上限」，仅 GEMM）`
+    + `<br><span style="color:var(--muted)">全系统「理论峰值输入吞吐」= 上式 × numP×DP槽 ÷ (1−命中率)，`
+    + `再扣 Attention 延迟 —— 与本式不可直接比较。</span>`
+    + `<div class="divider"></div>`
+    + `<b>反向</b>（由实测反推 MFU）： MFU = 2N × 实测tok/s ÷ 峰值TFLOPS`
+    + (P.obsThput > 0
+        ? `<br>每槽 uncached = 实测 ${fmtK(P.obsThput)} × (1−${P.hitRate}) ÷ ${r.slots}槽`
+          + ` = <code>${fmtK(P.obsThput*(1-P.hitRate)/r.slots)}</code> tok/s`
+          + `<br>GEMM MFU = 2×${m.activeB}B × 上式 ÷ (${gpu.tflops}×TP${P.tp})`
+          + ` ≈ <code class="purple">${fmtPct(r.mfuGemm)}</code>（详见下方「MFU 反推」）`
+        : `<br><span class="warn">填入左栏「实测输入吞吐」即可反推当前 MFU。</span>`)
+    + `<div class="divider"></div>`
+    + `<b>注</b>：2N 只算权重矩阵乘（Tensor Core）。RMSNorm/激活/RoPE 等非 GEMM 算子受显存带宽约束，`
+    + `其开销「藏」在 MFU 偏低里 —— 这也是实测 MFU 一般只有 0.3~0.5、到不了 1.0 的原因。`);
+}
+
+function render(){
+  const P = readParams();
+  const r = compute(P);
+  const gpu = GPU_PRESETS[P.gpu], m = MODEL_PRESETS[P.model];
+  const fullLayers = m.hybrid ? m.fullLayers : m.layers;
+  const peakMFU = gpu.tflops * P.tp * P.mfu;                 // 有效算力 TFLOP/s
+  const attnFlopsMStr = (r.attnFlopsPerTokTok / 1e6).toFixed(2);
+
+  set("v-inputThput", fmtK(r.inputThput)+" tok/s");
+  set("v-compThput",  fmtK(r.computeThput)+" tok/s");
+  set("v-prefillMs",  fmtMs(r.prefillMs));
+  set("k-inputThput", "理论峰值输入吞吐（prefill 满载）");
+  set("k-compThput",  "理论峰值计算吞吐（uncached）");
+  set("v-concurrency", r.slots + " 并发请求");
+  set("k-concurrency", "全系统并发 = numP×DP = " + P.numP + "×" + P.dp);
+
+  // ① prefill 分解（自底向上：先算延迟，再算吞吐）
+  html("v-breakdown",
+    `分解: GEMM <code>${fmtMs(r.gemmMs)}</code> + Attention <code>${fmtMs(r.attnMs)}</code> = prefill <code>${fmtMs(r.prefillMs)}</code>`
+    + `<div class="divider"></div>`
+    + `<b>① 拆 token</b>：uncached = 输入 <code>${fmtK(P.inputLen)}</code> × (1−命中率 ${P.hitRate}) = <code>${fmtK(r.uncached)}</code>`
+    + `；&nbsp;avgCtx = cached <code>${fmtK(r.cached)}</code> + uncached/2 = <code>${fmtK(r.avgCtx)}</code>`
+    + `<br><b>② 有效算力</b>：peak×MFU = ${gpu.tflops}TFLOPS × TP${P.tp} × MFU${P.mfu} = <code>${fmtNum(peakMFU)} TFLOP/s</code>`
+    + `<br><b>③ prefill上限</b>：peak×MFU ÷ 2N = ${fmtNum(peakMFU)}T ÷ (2×${m.activeB}B) = <code>${fmtK(r.prefillTokPerSec)}</code> tok/s`
+    + `<br><b>④ GEMM</b>：uncached <code>${fmtK(r.uncached)}</code> ÷ prefill上限 <code>${fmtK(r.prefillTokPerSec)}</code> = <code>${fmtMs(r.gemmMs)}</code>`
+    + `<br><b>⑤ 单层 Attn FLOPs/tok²</b>：4×qHeads${m.qHeads}×headDim${m.headDim} = <code>${((4*m.qHeads*m.headDim)/1e6).toFixed(3)}M</code>`
+    + `<br><b>⑥ 全注意力层</b>(${r.fullLayers}层)：单层 × ${r.fullLayers} × uncached <code>${fmtK(r.uncached)}</code> × avgCtx <code>${fmtK(r.avgCtx)}</code> ÷ peak×MFU = <code>${fmtMs(r.attnMsFull)}</code>`
+    + (r.swaLayers > 0
+        ? `<br><b>⑦ SWA 层</b>(${r.swaLayers}层)：单层 × ${r.swaLayers} × uncached <code>${fmtK(r.uncached)}</code> × min(窗口 <code>${fmtK(r.swaWindow)}</code>, avgCtx) = min→<code>${fmtK(r.swaCtx)}</code> ÷ peak×MFU = <code>${fmtMs(r.attnMsSwa)}</code>`
+          + `<br><b>⑧ Attn 合计</b>：全注意力 <code>${fmtMs(r.attnMsFull)}</code> + SWA <code>${fmtMs(r.attnMsSwa)}</code> = <code>${fmtMs(r.attnMs)}</code>`
+        : ``));
+
+  // ② 吞吐（用上面的 prefill 时间）
+  const s1 = r.swaLayers > 0 ? "⑨" : "⑦", s2 = r.swaLayers > 0 ? "⑩" : "⑧";
+  html("v-thput-note",
+    `<b>${s1} 计算吞吐</b>：uncached <code>${fmtK(r.uncached)}</code> ÷ prefill <code>${fmtMs(r.prefillMs)}</code> × 槽数(numP×DP=<code>${r.slots}</code>) = <code>${fmtK(r.computeThput)} tok/s</code>`
+    + `<br><b>${s2} 输入吞吐</b>：计算吞吐 <code>${fmtK(r.computeThput)}</code> ÷ (1−命中率 ${P.hitRate}) = <code class="accent">${fmtK(r.inputThput)} tok/s</code>`);
+
+  renderFormula(P, r);
+
+  set("v-kvBudget", fmtGB(r.kvBudgetGB));
+  set("v-maxTok",   fmtK(r.maxTok)+" tok");
+  set("v-maxReq",   r.maxReq.toFixed(1)+" req");
+  set("v-cellSize", (r.cell/1024).toFixed(1)+" KB");
+  const fits = P.inputLen <= r.maxTok;
+  html("v-memNote",
+    `KV 预算 = HBM ${GPU_PRESETS[P.gpu].hbm}G × TP${P.tp} × EP${P.ep} × ${P.kvFrac} = <code>${fmtGB(r.kvBudgetGB)}</code>`
+    + `<br>单请求 ${fmtK(P.inputLen)} tok → `
+    + (fits ? `<span class="ok">✓ 装得下 (占 ${fmtPct(P.inputLen/r.maxTok)} KV)</span>`
+            : `<span class="warn">✗ 单请求就超预算</span>`));
+
+  const secMfu = document.getElementById("sec-mfu");
+  if (P.obsThput > 0){
+    secMfu.style.display = "";
+    set("v-mfuGemm",  fmtPct(r.mfuGemm));
+    set("v-mfuTotal", fmtPct(r.mfuTotal));
+    const lowUtil = r.util < 0.5;
+    html("v-mfuNote",
+      `由实测 <code>${fmtK(P.obsThput)}</code> tok/s 反推。`
+      + `<br>prefill 利用率 = 实测/理论峰值 = <code class="${lowUtil?'warn':'ok'}">${fmtPct(r.util)}</code>`
+      + (lowUtil ? ` → <span class="warn">远未打满 prefill 算力，瓶颈在 decode / KV 传输 / 排队，不在 prefill GEMM。</span>` : ``)
+      + `<br>GEMM MFU 只算权重矩阵乘，可跟厂商标称值对比；Total MFU 含 attention FLOPs，更接近真实算力利用。`
+      + (r.mfuGemm>1 ? `<br><span class="warn">GEMM MFU>100%：实测超过纯 GEMM 上限，说明命中率/并发/TP 假设偏低。</span>` : ``));
+  } else {
+    secMfu.style.display = "none";
+  }
+  html("v-assumptions",
+    `<b>假设与口径</b>：吞吐 = 单副本按总 prefill 时间折算 × 并发槽（numP×DP），`
+    + `chunk 管线化未细算（用总时间近似，略保守）。EP 只进显存预算，不改算力（专家并行不改每 token 激活量）。`
+    + `KV 预算是一阶近似（HBM×TP×EP×占比），未精确扣除权重/激活。attention 分全注意力层 O(ctx) 与 SWA 层 O(min(窗口,ctx)) 两项。`);
+}
+
+/* ══════════ init ══════════ */
+function init(){
+  const gpuSel = document.getElementById("gpu");
+  for (const [k,v] of Object.entries(GPU_PRESETS)){
+    const o = document.createElement("option");
+    o.value = k; o.textContent = v.label; gpuSel.appendChild(o);
+  }
+  gpuSel.value = "h200";
+  const modelSel = document.getElementById("model");
+  for (const [k,v] of Object.entries(MODEL_PRESETS)){
+    const o = document.createElement("option");
+    o.value = k; o.textContent = v.label; modelSel.appendChild(o);
+  }
+  modelSel.value = "mimo_v25";
+  // 切换模型时回填该模型的 SWA 窗口预设
+  modelSel.addEventListener("change", () => {
+    document.getElementById("swaWindow").value = MODEL_PRESETS[modelSel.value].swaWindow || 0;
+  });
+  // neutral defaults
+  document.getElementById("tp").value = "1";
+  document.getElementById("dp").value = "1";
+  document.querySelectorAll("input,select").forEach(el => {
+    el.addEventListener("input", render);
+    el.addEventListener("change", render);
+  });
+  render();
+}
+init();
+</script>
+</body>
+</html>
