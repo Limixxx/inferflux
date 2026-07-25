@@ -1,0 +1,997 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; base-uri 'self'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>InferFlux · Attention 3D</title>
+<style>
+:root{ --bg:#0d1117; --panel:#161b22cc; --border:#2d3646; --text:#e6edf3;
+  --muted:#8b98a9; --accent:#4ea1ff; --cyan:#39c5cf; --q:#4ea1ff; --k:#f0a44a; --v:#57d977; }
+*{box-sizing:border-box; margin:0; padding:0;}
+html,body{height:100%;}
+body{background:var(--bg); color:var(--text); overflow:hidden;
+  font-family:-apple-system,"SF Pro","Segoe UI",Roboto,"PingFang SC",sans-serif;}
+#gl{display:block; width:100vw; height:100vh; cursor:grab; touch-action:none;}
+#gl:active{cursor:grabbing;}
+.hud{position:fixed; top:16px; left:16px; max-width:340px; pointer-events:none;}
+.hud .home{display:inline-block; pointer-events:auto; color:var(--muted); font-size:12px;
+  text-decoration:none; margin-bottom:6px;}
+.hud .home:hover{color:var(--accent);}
+.hud h1{font-size:15px; font-weight:700; margin-bottom:6px;}
+.hud .step{color:var(--accent); font-weight:600; font-size:13px;}
+.hud .desc{color:var(--muted); font-size:12px; line-height:1.6; margin-top:4px;}
+.legend{display:flex; flex-wrap:wrap; gap:8px 12px; margin-top:10px; font-size:11px; color:var(--muted);}
+.legend i{display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:middle;}
+.panel{position:fixed; bottom:16px; left:50%; transform:translateX(-50%);
+  background:var(--panel); backdrop-filter:blur(8px); border:1px solid var(--border);
+  border-radius:12px; padding:12px 16px; display:flex; align-items:center; gap:12px;
+  font-size:12px; flex-wrap:wrap; justify-content:center; max-width:calc(100vw - 24px);}
+.panel select:disabled{opacity:.5; cursor:not-allowed;}
+.panel button{background:#1c2330; border:1px solid var(--border); color:var(--text);
+  border-radius:7px; padding:6px 12px; cursor:pointer; font-size:12px;}
+.panel button:hover{border-color:var(--accent);}
+.panel button.primary{background:var(--accent); border-color:var(--accent); color:#08111e; font-weight:600;}
+.panel .grp{display:flex; align-items:center; gap:6px; color:var(--muted);}
+.panel select{background:#1c2330; border:1px solid var(--border); color:var(--text);
+  border-radius:6px; padding:4px 6px; font-size:12px;}
+.badge{position:fixed; bottom:16px; right:16px; color:var(--muted); font-size:11px;}
+#btnLang{position:fixed; top:16px; right:16px; background:#1c2330; border:1px solid var(--border);
+  color:var(--text); border-radius:6px; padding:4px 10px; cursor:pointer; font-size:12px;}
+@media (max-width:640px){
+  .hud{max-width:none; right:16px; top:12px; left:12px;}
+  .hud h1{font-size:14px;}
+  .hud .desc{font-size:11px;}
+  .badge{display:none;}
+  .panel{left:8px; right:8px; transform:none; bottom:10px; gap:8px 10px;
+    flex-wrap:wrap; justify-content:center; padding:10px 12px;}
+  .panel button{padding:8px 12px; font-size:13px;}
+  .panel select{padding:6px 8px; font-size:13px;}
+}
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div class="hud">
+  <a class="home" href="index.html">← <span id="tHome"></span></a>
+  <h1 id="title"></h1>
+  <div class="step" id="stepName"></div>
+  <div class="desc" id="stepDesc"></div>
+  <div class="legend" id="legend"></div>
+</div>
+<button id="btnLang">EN</button>
+<div class="panel">
+  <button id="btnPrev">‹ <span id="tPrev"></span></button>
+  <button class="primary" id="btnPlay"></button>
+  <button id="btnNext"><span id="tNext"></span> ›</button>
+  <span class="grp"><span id="tMode"></span>
+    <select id="selMode"><option>MHA</option><option selected>GQA</option><option>MQA</option></select></span>
+  <span class="grp"><span id="tMlp"></span>
+    <select id="selMlp"><option value="DENSE" selected>Dense</option><option value="MOE">MoE</option></select></span>
+  <span class="grp"><span id="tHq"></span>
+    <select id="selHq"><option>4</option><option selected>8</option><option>16</option></select></span>
+  <span class="grp"><span id="tHkv"></span>
+    <select id="selHkv"><option>1</option><option selected>2</option><option>4</option></select></span>
+  <span class="grp"><span id="tSeq"></span>
+    <select id="selSeq"><option>3</option><option selected>4</option><option>6</option></select></span>
+  <span class="grp"><span id="tTP"></span>
+    <select id="selTP"><option selected>1</option><option>2</option><option>4</option><option>8</option></select></span>
+  <span class="grp"><span id="tDP"></span>
+    <select id="selDP"><option selected>1</option><option>2</option><option>4</option></select></span>
+  <span class="grp" id="grpEP"><span id="tEP"></span>
+    <select id="selEP"><option>1</option><option selected>2</option><option>4</option><option>8</option></select></span>
+  <span class="grp" id="grpTopk"><span id="tTopk"></span>
+    <select id="selTopk"><option>1</option><option selected>2</option><option>4</option></select></span>
+</div>
+<div class="badge">Three.js r0.185 · pure static</div>
+<script>
+// visible error overlay — shows load/runtime errors on screen instead of blank
+window.addEventListener("error", function(e){
+  var msg = e.message || (e.error && e.error.message) || String(e);
+  if(e.filename) msg += "  @ " + e.filename.split("/").pop() + ":" + e.lineno;
+  var d = document.createElement("div");
+  d.style.cssText = "position:fixed;left:8px;right:8px;bottom:80px;z-index:99;"+
+    "background:#2a1518;border:1px solid #f0a44a;border-radius:8px;padding:10px 12px;"+
+    "color:#f0a44a;font-size:12px;line-height:1.6;font-family:monospace;white-space:pre-wrap;";
+  d.textContent = "⚠ " + msg;
+  document.body.appendChild(d);
+});
+</script>
+<script type="module">
+import * as THREE from './vendor/three.module.js';
+import { OrbitControls } from './vendor/jsm/controls/OrbitControls.js';
+
+// ---------- i18n ----------
+const STEPS = [
+  { name:{zh:"1 · 输入投影",en:"1 · Projection"},
+    desc:{zh:"输入 X 乘以权重 W_Q/W_K/W_V 得到 Q/K/V。GQA 中 Q 有 H_q 个头，K/V 只有 H_kv 个头（H_kv < H_q）。",
+          en:"X is multiplied by weights W_Q/W_K/W_V to form Q/K/V. GQA gives Q H_q heads but K/V only H_kv heads (H_kv < H_q)."}},
+  { name:{zh:"2 · 分组共享",en:"2 · Grouping"},
+    desc:{zh:"H_q 个 Query 头分成 H_kv 组，每组内的所有 Q 头共享同一个 K/V 头 —— 这是 GQA 省显存的关键。",
+          en:"H_q query heads split into H_kv groups; every Q head in a group shares one K/V head — GQA's memory-saving core."}},
+  { name:{zh:"3 · 打分 QKᵀ",en:"3 · Scores QKᵀ"},
+    desc:{zh:"每个 Q 头与其所属组的 K 头做点积，得到 seq×seq 的注意力分数矩阵，再除以 √d_k。",
+          en:"Each Q head dots with its group's K head → a seq×seq score matrix, scaled by 1/√d_k."}},
+  { name:{zh:"4 · Softmax",en:"4 · Softmax"},
+    desc:{zh:"对分数矩阵按行做 softmax，得到归一化的注意力权重（每行和为 1）。",
+          en:"Row-wise softmax over the scores yields normalized attention weights (each row sums to 1)."}},
+  { name:{zh:"5 · 加权求和 ×V",en:"5 · Weighted ×V"},
+    desc:{zh:"注意力权重乘以组内共享的 V 头，得到每个 Q 头的上下文向量 context（=Σ w·V）。",
+          en:"Multiply weights by the group's shared V head → per-head context vector (= Σ w·V)."}},
+  { name:{zh:"6 · 输出投影 o_proj",en:"6 · Output proj o_proj"},
+    desc:{zh:"拼接所有 H_q 个头的 context，乘以输出权重 W_O(o_proj，行并行) 投回 hidden。TP>1 时各 GPU 部分和经一次 AllReduce。",
+          en:"Concatenate all H_q contexts × W_O (o_proj, row-parallel) back to hidden. With TP>1, partial sums are AllReduced."}},
+  { name:{zh:"7 · 残差①",en:"7 · Residual ①"} },              // 6 residual after attn
+  { name:{zh:"8 · MLP/MoE · 上投影",en:"8 · MLP/MoE · up"} },   // 7 mlp up
+  { name:{zh:"9 · MLP/MoE · 下投影",en:"9 · MLP/MoE · down"} }, // 8 mlp down
+  { name:{zh:"10 · 残差② → 层输出",en:"10 · Residual ② → output"} }, // 9 residual after mlp
+];
+// descriptions for the appended (non-attention) steps; MLP steps depend on Dense/MoE
+const XDESC = {
+  res1:{zh:"注意力输出加回输入 X（残差连接）。这是 Transformer 层的第一个 add。",
+        en:"Attention output is added back to input X (residual). The layer's first add."},
+  mlpUp:{ DENSE:{zh:"稠密 MLP：gate_up_proj（列并行）把 hidden 升到 2·inter，SiluAndMul 做 silu(gate)·up。每张 GPU 只算 inter/tp。",
+        en:"Dense MLP: gate_up_proj (column-parallel) lifts hidden to 2·inter; SiluAndMul does silu(gate)·up. Each GPU computes inter/tp."},
+    MOE:{zh:"MoE：gate(ReplicatedLinear) 算 router_logits，softmax 取 top-k(k=2) 个专家（每 token）。EP 下每张 GPU 只放 num_experts/ep 个专家，token 经 all-to-all dispatch 发到对应 GPU。另有 shared expert 对所有 token 无条件激活。",
+        en:"MoE: gate → router_logits, softmax top-k (k=2) experts (per token). Under EP each GPU holds num_experts/ep experts; tokens go via all-to-all dispatch to the owner GPU. A shared expert fires for every token unconditionally."} },
+  mlpDown:{ DENSE:{zh:"down_proj（行并行）把 inter 投回 hidden；TP>1 时各 GPU 部分和经一次 AllReduce 求和成完整输出。",
+        en:"down_proj (row-parallel) maps inter back to hidden; with TP>1 partial sums are combined by one AllReduce."},
+    MOE:{zh:"各专家跑自己的 SwiGLU，结果经 all-to-all combine 送回原 GPU，按 router 概率加权求和；shared expert（dense/TP1）并行相加。",
+        en:"Each expert runs its SwiGLU; results return via all-to-all combine, weighted by router probs; a shared expert (dense/TP1) is added in parallel."} },
+  res2:{zh:"MLP/MoE 输出加回残差①的结果，得到这一层的输出 hidden。真实模型会堆叠很多这样的层。",
+        en:"MLP/MoE output is added back to residual① → this layer's output hidden. Real models stack many such layers."},
+};
+const UI = {
+  zh:{title:"GQA — 分组查询注意力",prev:"上一步",next:"下一步",play:"播放",pause:"暂停",
+      hq:"Q头",hkv:"KV头",seq:"序列",q:"Query 头",k:"Key 头",v:"Value 头",tp:"TP",home:"首页",
+      gpu:"GPU",kvrep:"KV 复制",mlp:"MLP",ep:"EP",res:"残差",topk:"top-k",dp:"DP"},
+  en:{title:"GQA — Grouped Query Attention",prev:"Prev",next:"Next",play:"Play",pause:"Pause",
+      hq:"Q heads",hkv:"KV heads",seq:"Seq",q:"Query",k:"Key",v:"Value",mode:"Mode",tp:"TP",home:"Home",
+      gpu:"GPU",kvrep:"KV replica",mlp:"MLP",ep:"EP",res:"residual",topk:"top-k",dp:"DP"},
+};
+UI.zh.mode = "模式";
+// per-mode titles + overrides for the steps whose meaning changes with the mode
+const MODES = {
+  MHA:{ title:{zh:"MHA — 多头注意力",en:"MHA — Multi-Head Attention"},
+    proj:{zh:"X(seq×d_model) 乘以 W_Q/W_K/W_V。MHA 中 H_kv = H_q，故 W_K/W_V 与 W_Q 等宽。（图中 d_k 用小值示意，真实 d_k≈64，d_model = H_q·d_k）",
+          en:"X(seq×d_model) × W_Q/W_K/W_V. In MHA H_kv = H_q, so W_K/W_V are as wide as W_Q. (Geometry uses a small d_k; real d_k≈64, d_model = H_q·d_k.)"},
+    grp:{zh:"每个 Query 头对应独立的 K/V 头，没有任何共享 —— 这是最经典、但最耗显存的形式。",
+         en:"Each query head maps to its own K/V head with no sharing — the classic form, but the most memory-hungry."}},
+  GQA:{ title:{zh:"GQA — 分组查询注意力",en:"GQA — Grouped Query Attention"},
+    proj:{zh:"X(seq×d_model) 乘以 W_Q/W_K/W_V。GQA 中 H_kv < H_q，故 W_K/W_V 比 W_Q 窄（宽度 = H_kv·d_k）。（真实 d_k≈64，d_model = H_q·d_k）",
+          en:"X(seq×d_model) × W_Q/W_K/W_V. In GQA H_kv < H_q, so W_K/W_V are narrower than W_Q (width = H_kv·d_k). (real d_k≈64, d_model = H_q·d_k.)"},
+    grp:{zh:"H_q 个 Query 头分成 H_kv 组，每组内的 Q 头共享同一个 K/V 头 —— GQA 在显存与效果间折中。",
+         en:"H_q query heads split into H_kv groups; each group shares one K/V head — GQA trades memory for quality."}},
+  MQA:{ title:{zh:"MQA — 多查询注意力",en:"MQA — Multi-Query Attention"},
+    proj:{zh:"X(seq×d_model) 乘以 W_Q/W_K/W_V。MQA 中 H_kv = 1，故 W_K/W_V 最窄（宽度 = d_k）。（真实 d_k≈64，d_model = H_q·d_k）",
+          en:"X(seq×d_model) × W_Q/W_K/W_V. In MQA H_kv = 1, so W_K/W_V are narrowest (width = d_k). (real d_k≈64, d_model = H_q·d_k.)"},
+    grp:{zh:"全部 H_q 个 Query 头共享唯一的 K/V 头 —— 显存最省，但表达力也最受限。",
+         en:"All H_q query heads share the single K/V head — the most memory-efficient, but the most constrained."}},
+};
+let LANG = (navigator.language||"").toLowerCase().startsWith("zh")?"zh":"en";
+
+// ---------- three.js scene ----------
+const canvas = document.getElementById("gl");
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({canvas, antialias:true});
+} catch(e){
+  document.body.insertAdjacentHTML("beforeend",
+    "<div style='position:fixed;inset:0;display:flex;align-items:center;justify-content:center;"+
+    "padding:24px;text-align:center;color:#f0a44a;font-size:14px;line-height:1.7'>"+
+    "WebGL 初始化失败 / WebGL init failed<br>"+String(e)+"</div>");
+  throw e;
+}
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x141b26);
+const FOV = 50;
+const camera = new THREE.PerspectiveCamera(FOV, innerWidth/innerHeight, 0.1, 500);
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true; controls.dampingFactor = 0.08;
+controls.target.set(0, 0, 0);
+
+// bounding radius of the whole pipeline, set by build()
+let BOUND = 22;
+let viewInit = false; // false until the first frameCamera sets the default iso angle
+// place camera so the bounding sphere fits BOTH vertical and horizontal FOV
+function frameCamera(){
+  const aspect = innerWidth/innerHeight;
+  const vFov = FOV*Math.PI/180;
+  const hFov = 2*Math.atan(Math.tan(vFov/2)*aspect);
+  const fit = Math.min(vFov, hFov);           // tighter axis decides distance
+  const dist = (BOUND/Math.sin(fit/2)) * 0.9; // fill more of the screen
+  // preserve the user's current view direction; use the iso default only on first load
+  const dir = viewInit
+    ? new THREE.Vector3().subVectors(camera.position, controls.target).normalize()
+    : new THREE.Vector3(0.32, 0.72, 0.62).normalize(); // raised, flatter 3D view
+  viewInit = true;
+  camera.position.copy(controls.target).addScaledVector(dir, dist);
+  camera.near = Math.max(0.1, dist - BOUND*2);
+  camera.far  = dist + BOUND*2.5;
+  camera.updateProjectionMatrix();
+  controls.update();
+}
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.95));
+scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x1a2233, 0.7)); // soft sky/ground fill
+const key = new THREE.DirectionalLight(0xffffff, 1.5);
+key.position.set(8, 14, 10); scene.add(key);
+const fill = new THREE.DirectionalLight(0xffffff, 0.7);
+fill.position.set(-6, 6, 12); scene.add(fill);
+const rim = new THREE.DirectionalLight(0x8bc0ff, 0.5);
+rim.position.set(-10, 4, -8); scene.add(rim);
+
+const root = new THREE.Group(); scene.add(root);
+
+function onResize(){
+  camera.aspect = innerWidth/innerHeight;
+  renderer.setSize(innerWidth, innerHeight);
+  frameCamera();
+}
+addEventListener("resize", onResize);
+// orientationchange fires late on mobile; reframe after it settles
+addEventListener("orientationchange", ()=> setTimeout(onResize, 300));
+
+let clock = new THREE.Clock();
+function animate(){
+  requestAnimationFrame(animate);
+  const dt = clock.getDelta(), t = clock.elapsedTime;
+  controls.update();
+  if(parts) updateScene(dt, t);
+  renderer.render(scene, camera);
+}
+// NOTE: render loop is started at the bottom (after build()) so `parts` exists.
+// ---------- geometry helpers ----------
+const COL = { q:0x4ea1ff, k:0xf0a44a, v:0x57d977, x:0x8b98a9, out:0x39c5cf, cell:0xe5484d,
+  wQ:0x2f5f9e, wK:0x9e6b2f, wV:0x2f7a44, wO:0x2f7a80, ctx:0x8f7fd8, // weight mats + context
+  res:0xe0b341, inter:0x57d977, router:0xe0b341, shared:0xc678dd, comm:0xeaf0f8, lout:0x39c5cf,
+  wUp:0x2f7a44, wDn:0x2f7a80 }; // layer: residual/MLP/MoE (+ gate_up/down weight mats)
+// distinct per-GPU (rank) colors for tensor-parallel view; index by rank
+const GPU_COLS = [0x4ea1ff, 0xf0a44a, 0x57d977, 0xc678dd, 0xe5484d, 0x39c5cf, 0xe0b341, 0xff8fab];
+const REPLICATE_COL = 0x8b98a9; // grey = KV head replicated across GPUs (not partitioned)
+const boxGeo = new THREE.BoxGeometry(1,1,1);
+function mat(color,opacity){ return new THREE.MeshStandardMaterial(
+  {color, roughness:1.0, metalness:0.0, transparent:true, opacity:opacity??1,
+   emissive:color, emissiveIntensity:0.0}); }
+
+// a panel of stacked cells = one "head": `rows` tall (Y), `cols` wide.
+// axis='x' spreads columns along X (compact heads); axis='z' spreads them along Z (wide matrices).
+function makeHead(color, rows, w, cols, axis){
+  const g = new THREE.Group();
+  const m = mat(color,1);
+  const nc = cols??1;
+  const cw = nc>1 ? 0.55 : (w??0.9);   // narrower cells when it's a real grid
+  const gap = nc>1 ? 0.62 : 1.0;       // column spacing
+  const alongZ = axis==='z';
+  for(let r=0;r<rows;r++) for(let c=0;c<nc;c++){
+    const cell = new THREE.Mesh(boxGeo, m);
+    const off = (c-(nc-1)/2)*gap;
+    cell.scale.set(alongZ?0.6:cw, 0.92, alongZ?cw:0.6);
+    cell.position.y = (r-(rows-1)/2)*1.0;
+    if(alongZ) cell.position.z = off; else cell.position.x = off;
+    g.add(cell);
+  }
+  g.userData.mat = m;
+  return g;
+}
+
+// a rows x cols matrix. orient='flat' lies on the ground (rows along Z, cols along X) —
+// used for the seq x seq score/weight grids read from above. orient='stand' stands upright
+// (rows along Y, cols along Z) — used for the projection weights so their width = cols reads.
+// perCell=true gives each cell its own material (needed for the reveal animation); otherwise
+// all cells share one material (far cheaper for the big weight matrices).
+// blockCols: if set, insert a gap every `blockCols` columns so per-head blocks are countable
+// (W_Q → H_q blocks of d_k; W_K/W_V → H_kv blocks). Matches SGLang q_size/kv_size = heads·d_k.
+// blockColor(i,j): optional → returns a hex per cell so weight matrices can be tinted by the
+// owning GPU rank (ColumnParallel = colour by column-block, RowParallel = by row-block).
+// Same colour reuses one material; all block materials live in userData.mats for anim.
+// divs (optional): draw GPU-partition separator lines as children of the matrix group so they
+// scale/fade with it. {axis:'col'|'row', at:[boundary indices]} — 'col'=vertical (col-parallel),
+// 'row'=horizontal (row-parallel). Lines land on the mid-point between the two bordering cells.
+function makeMatrix(rows, cols, color, orient, perCell, blockCols, spacing, blockColor, divs){
+  const g = new THREE.Group();
+  const cells = [];
+  const stand = orient==='stand';
+  const shared = perCell ? null : (blockColor ? null : mat(color,1));
+  const matCache = new Map();                    // hex → shared material (for blockColor mode)
+  const blockMat = hex => { let m=matCache.get(hex); if(!m){ m=mat(hex,1); matCache.set(hex,m);} return m; };
+  const sp = stand ? 0.62 : (spacing??1.0);       // flat: caller supplies spacing to avoid overlap
+  const bc = blockCols||0, gap = 0.55;           // extra space between head-blocks
+  // column offset with inter-block gaps folded in, then re-centred
+  const colX = j => j*sp + (bc? Math.floor(j/bc)*gap : 0);
+  const lastX = colX(cols-1), midX = lastX/2;
+  for(let i=0;i<rows;i++)for(let j=0;j<cols;j++){
+    const m = perCell ? mat(color,1) : (blockColor ? blockMat(blockColor(i,j)) : shared);
+    const c = new THREE.Mesh(boxGeo, m);
+    const rOff = (i-(rows-1)/2), cOff = colX(j) - midX;
+    if(stand){ c.scale.set(0.44,0.44,0.44); c.position.set(0, rOff*sp, cOff); }
+    else     { c.scale.set(0.78,0.3,0.78); c.position.set(cOff, 0, rOff*1.0); }
+    g.add(c); cells.push({mesh:c, mat:m, i, j});
+  }
+  // GPU partition dividers (standing matrices only). Push to +X so they float in FRONT of the
+  // flat cube sheet (else an in-plane line is hidden by cube faces — esp. the row dividers, whose
+  // row gaps are far narrower than the column-block gaps). Extend a bit past the sheet edges too.
+  if(divs && stand){
+    const xf = 0.35;                                        // forward offset, clears cube half-thickness 0.22
+    const yHalf = (rows-1)/2*sp + 0.5, zHalf = midX + 0.5;
+    divs.at.forEach(k=>{
+      if(divs.axis==='col'){                       // vertical line between col k-1 and k
+        const z = (colX(k-1)+colX(k))/2 - midX;
+        g.add(line(new THREE.Vector3(xf,-yHalf,z), new THREE.Vector3(xf,yHalf,z), 0xeaf0f8, 0.9));
+      } else {                                     // horizontal line between row k-1 and k
+        const y = (k-0.5-(rows-1)/2)*sp;
+        g.add(line(new THREE.Vector3(xf,y,-zHalf), new THREE.Vector3(xf,y,zHalf), 0xeaf0f8, 0.9));
+      }
+    });
+  }
+  if(perCell)        g.userData.cells = cells;   // animated per-cell
+  else if(blockColor)g.userData.mats  = [...matCache.values()]; // several block materials
+  else               g.userData.mat   = shared;  // single material → use setEmissive/opacity
+  return g;
+}
+
+// AdditiveBlending: a line's colour is ADDED to the dark background, so a low-opacity line
+// reads as a faint glow of its own colour — never darkening toward black the way normal
+// alpha blending does on a dark bg. depthWrite:false keeps overlapping lines from culling.
+function line(a, b, color, opacity){
+  const geo = new THREE.BufferGeometry().setFromPoints([a,b]);
+  const m = new THREE.LineBasicMaterial({color, transparent:true, opacity:opacity??0.5,
+    blending:THREE.AdditiveBlending, depthWrite:false});
+  return new THREE.Line(geo, m);
+}
+
+// billboard text label (always faces camera)
+function makeLabel(text, hex){
+  const cv = document.createElement("canvas");
+  const ctx = cv.getContext("2d");
+  const font = "bold 52px -apple-system,Segoe UI,Roboto,sans-serif";
+  ctx.font = font;
+  const w = Math.ceil(ctx.measureText(text).width) + 24;
+  cv.width = w; cv.height = 72;
+  ctx.font = font; ctx.textBaseline = "middle";
+  ctx.fillStyle = "#" + hex.toString(16).padStart(6,"0");
+  ctx.fillText(text, 12, 40);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.anisotropy = 4;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({map:tex, transparent:true, depthTest:false}));
+  sp.scale.set(w/72*1.6, 1.6, 1);
+  return sp;
+}
+// ---------- build GQA layout ----------
+let cfg = { Hq:8, Hkv:2, seq:4, dim:2, mode:"GQA", tp:1, // dim=d_k; tp=tensor-parallel GPUs
+  mlp:"DENSE", ep:2, topk:2, dp:1 };                     // MLP kind + expert-parallel + top-k + data-parallel
+let parts = null; // holds groups/meshes we animate
+
+function clearRoot(){ while(root.children.length) root.remove(root.children[0]); }
+
+function build(){
+  clearRoot();
+  const {Hq,Hkv,seq,dim} = cfg;
+  const perGroup = Hq/Hkv;
+  const dmodel = Hq*dim;          // d_model = H_q · d_k
+  const kvWidth = Hkv*dim;        // width of K/V projections (shrinks with H_kv) — the GQA/MQA point
+  const dp = cfg.dp||1;           // data-parallel degree: one attention lane per DP rank
+  // parts.lanes[d] holds one DP rank's attention pipeline; parts.moe holds the shared MoE
+  // tail; parts.laneTails[d] holds each rank's res2/output. DP=1 → single lane, identical
+  // geometry to before. `group` (which KV group to highlight) is global across lanes.
+  parts = { lanes:[], laneTails:[], moe:null, group:0, labels:[] };
+
+  const GAP = 1.5;
+  const standTop = r => r*0.62/2 + GAP; // top of a standing matrix + uniform gap
+  const dTop    = standTop(dmodel);
+  const headLY  = seq/2 + GAP;          // above a `seq`-row head
+  const flatLY  = 0.2  + GAP;           // above a flat (thin) matrix
+
+  // root-level label; `owner` drives focus opacity; y is absolute world-Y
+  const addLabel = (txt, x, z, hex, owner, y)=>{ const s=makeLabel(txt, hex);
+    s.position.set(x, y??dTop, z||0); root.add(s);
+    parts.labels.push({sp:s, owner}); return s; };
+  // label parented to a group (scales with it); ly is local-y offset from group centre
+  const addChildLabel = (grp, txt, ly, hex)=>{ const s=makeLabel(txt, hex);
+    s.position.set(0, ly, 0); grp.add(s);
+    parts.labels.push({sp:s, owner:grp}); return s; };
+
+  // ---- uniform pipeline: 12 stages equally spaced along the central axis ----
+  const PITCH = 5, X0 = -27.5;      // 12 slots × 5 ≈ 55 wide, centred near origin
+  const slot = i => X0 + i*PITCH;
+  // 0:X 1:W_Q 2:W_K 3:W_V 4:Q 5:K 6:V 7:scores 8:softmax 9:context 10:W_O 11:Output
+
+  // ---- tensor-parallel rank helpers (shared by weights and heads; identical per lane) ----
+  const tp = cfg.tp||1, qPerGpu = Hq/tp;          // each GPU owns qPerGpu contiguous Q heads
+  const kvSplit = Hkv >= tp, kvPerGpu = kvSplit ? Hkv/tp : 0;
+  const qRankColor  = h => GPU_COLS[Math.floor(h/qPerGpu) % GPU_COLS.length];       // Q head → rank colour
+  const kvRankColor = g => kvSplit ? GPU_COLS[Math.floor(g/kvPerGpu) % GPU_COLS.length] : REPLICATE_COL;
+  const wqCol = tp>1 ? ((i,j)=>qRankColor(Math.floor(j/dim)))  : null;
+  const wkvCol= tp>1 ? ((i,j)=>kvRankColor(Math.floor(j/dim))) : null;
+  const bounds = (n,per)=>{const a=[];for(let k=1;k<n;k++)a.push(k*per*dim);return a;};
+  const wqDivs = tp>1 ? {axis:'col', at:bounds(tp,qPerGpu)} : null;
+  const wkvDivs= (tp>1 && kvSplit) ? {axis:'col', at:bounds(tp,kvPerGpu)} : null;
+  const wReplicated = tp>1 && !kvSplit;
+  const wKVtag = tp<=1 ? "" : (kvSplit ? " col-parallel" : " \u590d\u5236\u00d7"+(tp/Hkv)+" replicated");
+  const kvTag  = tp<=1 ? "" : (kvSplit ? " ("+kvPerGpu+"/GPU)" : " (\u590d\u5236\u00d7"+(tp/Hkv)+")");
+  const qStartX = slot(4), qGap = 1.3, kX = slot(5), vX = slot(6);
+  const kvSpan = (Hq*qGap) * 0.5;
+  const flatSp = Math.min(1.0, (PITCH - 0.9) / Math.max(seq - 1, 1));
+
+  // one DP lane's full attention pipeline (X → … → attn out → res1), all offset by laneZ.
+  // Everything is pushed into L (a per-lane bag) rather than a global; labels get owner=L.<part>.
+  function buildAttentionLane(d, laneZ){
+    const L = { qHeads:[], kHeads:[], vHeads:[], shareLines:[], gpuBounds:[],
+                input:null, wQ:null, wK:null, wV:null, scores:null, weights:null,
+                ctxVec:null, wO:null, out:null, res1:null, res1Line:null };
+    const Z = z => z + laneZ;   // shift a local Z into this lane's band
+
+    // input X — seq × d_model
+    const xg = makeHead(COL.x, seq, 0.9, dmodel, 'z'); xg.position.set(slot(0),0,Z(0));
+    root.add(xg); L.input=xg;
+    addLabel((dp>1?"["+d+"] ":"")+"X  seq\u00d7d_model", slot(0), Z(0), 0xc4d0de, xg, headLY);
+
+    // projection weights W_Q/W_K/W_V (ColumnParallel; K/V shrink with H_kv)
+    L.wQ = makeMatrix(dmodel, dmodel,  COL.wQ, 'stand', false, dim, undefined, wqCol,  wqDivs);
+    L.wK = makeMatrix(dmodel, kvWidth, COL.wK, 'stand', false, dim, undefined, wkvCol, wkvDivs);
+    L.wV = makeMatrix(dmodel, kvWidth, COL.wV, 'stand', false, dim, undefined, wkvCol, wkvDivs);
+    L.wQ.position.set(slot(1),0,Z(0)); root.add(L.wQ);
+    L.wK.position.set(slot(2),0,Z(0)); root.add(L.wK);
+    L.wV.position.set(slot(3),0,Z(0)); root.add(L.wV);
+    addChildLabel(L.wQ, "W_Q ("+Hq+" heads)"+(tp>1?" col-parallel":""), dTop, 0x8fb8ff);
+    addChildLabel(L.wK, "W_K ("+Hkv+")"+wKVtag, dTop, wReplicated?REPLICATE_COL:COL.k);
+    addChildLabel(L.wV, "W_V ("+Hkv+")"+wKVtag, dTop, wReplicated?REPLICATE_COL:COL.v);
+
+    // Q heads
+    for(let h=0; h<Hq; h++){
+      const grp = Math.floor(h/perGroup), rank = Math.floor(h/qPerGpu);
+      const c = tp>1 ? GPU_COLS[rank % GPU_COLS.length]
+                     : new THREE.Color().setHSL(0.58 - grp*0.12, 0.75, 0.5).getHex();
+      const head = makeHead(c, seq, 1.0, dim);
+      head.position.set(qStartX, 0, Z((h-(Hq-1)/2)*qGap));
+      head.userData.group = grp; head.userData.rank = rank;
+      root.add(head); L.qHeads.push(head);
+    }
+    addLabel((dp>1?"["+d+"] ":"")+(tp>1 ? "Q \u00d7 "+Hq+" ("+qPerGpu+"/GPU)" : "Q \u00d7 "+Hq+" query heads"),
+      qStartX, Z(0), 0x7fb2ff, L.qHeads[0], headLY);
+    if(tp>1) for(let r=1; r<tp; r++){
+      const bz = Z(((r*qPerGpu - 0.5) - (Hq-1)/2) * qGap);
+      const ln = line(new THREE.Vector3(qStartX, -seq*0.7, bz), new THREE.Vector3(qStartX, seq*0.7, bz), 0xd0d8e4, 0.55);
+      root.add(ln); L.gpuBounds.push(ln);
+    }
+
+    // K & V heads: one per group; share lines Q→K within each group
+    for(let g=0; g<Hkv; g++){
+      const zc = Z(((g+0.5)/Hkv - 0.5) * kvSpan);
+      const kvC = tp>1 ? kvRankColor(g) : null;
+      const kh = makeHead(kvC ?? COL.k, seq, 1.0, dim); kh.position.set(kX,0,zc);
+      const vh = makeHead(kvC ?? COL.v, seq, 1.0, dim); vh.position.set(vX,0,zc);
+      root.add(kh); root.add(vh); L.kHeads.push(kh); L.vHeads.push(vh);
+      for(let h=g*perGroup; h<(g+1)*perGroup; h++){
+        const q = L.qHeads[h];
+        const ln = line(new THREE.Vector3(qStartX,0,q.position.z), new THREE.Vector3(kX,0,zc), COL.k, 0.0);
+        root.add(ln); L.shareLines.push(ln);
+      }
+    }
+    addLabel((dp>1?"["+d+"] ":"")+"K \u00d7 "+Hkv+kvTag, kX, Z(0), COL.k, L.kHeads[0], headLY);
+    addLabel((dp>1?"["+d+"] ":"")+"V \u00d7 "+Hkv+kvTag, vX, Z(0), COL.v, L.vHeads[0], headLY);
+
+    // scores / softmax weights (seq×seq, flat)
+    L.scores = makeMatrix(seq, seq, COL.cell, 'flat', true, null, flatSp);
+    L.scores.position.set(slot(7),0,Z(0)); root.add(L.scores);
+    addLabel("QK\u1d40", slot(7), Z(0), 0xe5484d, L.scores, flatLY);
+    L.weights = makeMatrix(seq, seq, COL.q, 'flat', true, null, flatSp);
+    L.weights.position.set(slot(8),0,Z(0)); root.add(L.weights);
+    addChildLabel(L.weights, "softmax", flatLY, 0x7fb2ff);
+
+    // context, W_O, attn out
+    L.ctxVec = makeHead(COL.ctx, seq, 0.9, dmodel, 'z'); L.ctxVec.position.set(slot(9),0,Z(0));
+    root.add(L.ctxVec); addChildLabel(L.ctxVec, "attn_output (context)", headLY, 0xb3a9ee);
+    const woRow = tp>1 ? ((i,j)=>qRankColor(Math.floor(i/dim))) : null;
+    const woDivs = tp>1 ? {axis:'row', at:bounds(tp,qPerGpu)} : null;
+    L.wO = makeMatrix(dmodel, dmodel, COL.wO, 'stand', false, undefined, undefined, woRow, woDivs);
+    L.wO.position.set(slot(10),0,Z(0)); root.add(L.wO);
+    addChildLabel(L.wO, tp>1 ? "W_O (row-parallel)" : "W_O", dTop, 0x7fd4dd);
+    L.out = makeHead(COL.out, seq, 0.9, dmodel, 'z'); L.out.position.set(slot(11),0,Z(0));
+    root.add(L.out); addChildLabel(L.out, "attn out", headLY, COL.out);
+
+    // residual ① = X + attn_output → seq × d_model (per-rank; all-to-all happens after this)
+    const r1=makeHead(COL.res, seq, 0.9, dmodel, 'z'); r1.position.set(RES1_X,0,Z(0));
+    root.add(r1); L.res1=r1;
+    addLabel((dp>1?"["+d+"] ":"")+"\u2295 \u6b8b\u5dee\u2460", RES1_X, Z(0), COL.res, r1, headLY);
+    L.res1Line=line(new THREE.Vector3(slot(11),-0.4,Z(0)), new THREE.Vector3(RES1_X,-0.4,Z(0)), COL.res, 0.0);
+    root.add(L.res1Line);
+    if(dp>1) addLabel("DP rank "+d, slot(0)-3.5, Z(0), 0x9aa7b8, L.input, headLY+1.6);
+    return L;
+  }
+
+  // stage X-anchors for the layer tail (set here so buildAttentionLane can place res1)
+  RES1_X = slot(11) + 5;
+  MUP_X  = RES1_X + 5; MIN_X = MUP_X + 5; MDN_X = MIN_X + 5; RES2_X = MDN_X + 5; LOUT_X = RES2_X + 5;
+
+  // lane stacking pitch along Z must clear the WIDEST per-lane element. Attention: Q fan
+  // ((Hq-1)*qGap) or d_model-deep heads ((dmodel-1)*0.62). Dense adds a per-lane MLP whose
+  // gate_up/interAct are inter-wide ((inter-1)*0.62). We use the SAME pitch for MoE too (even
+  // though MoE experts are a shared central block, not per-lane) so DP lane spacing is
+  // consistent across MLP modes — switching Dense↔MoE keeps the lanes at the same Z.
+  const interW = Math.max(cfg.tp||1, Math.round(Math.round(dmodel*2.5)/(cfg.tp||1))*(cfg.tp||1));
+  const laneWidest = Math.max((Hq-1)*qGap, (dmodel-1)*0.62, (interW-1)*0.62);
+  // pitch must clear the FULL widest element (focus grows an active lane to scale 1.0, so a
+  // 0.82× pack overlapped neighbours when one popped) + a gap so focused lanes never touch.
+  const LANE_DZ = laneWidest + 4;
+  const laneZ = d => (d-(dp-1)/2)*LANE_DZ;
+  for(let d=0; d<dp; d++) parts.lanes.push(buildAttentionLane(d, laneZ(d)));
+
+  // ---- append residual → MLP/MoE → residual → layer output ----
+  buildLayerRight(dmodel, seq, headLY, dTop, laneZ, addLabel, addChildLabel);
+
+  // ---- bounding radius for camera framing ----
+  const minX = slot(0)-5, maxX = LOUT_X+4, cx = (minX+maxX)/2;
+  const halfX = (maxX-minX)/2;
+  const laneHalfZ = laneWidest/2 + 2;                  // widest element in one lane
+  const dpHalfZ = (dp-1)/2*LANE_DZ + laneHalfZ;         // full stack of lanes
+  const halfZ = Math.max(dpHalfZ, MLP_HALFZ, 6);
+  // tallest standing matrix (inter-tall) up top; MoE shared replicas hang below (~8 further)
+  const halfY = Math.max(interW*0.62/2 + 2, cfg.mlp==="MOE" ? interW*0.62/2 + 8 : 0, 6);
+  BOUND = Math.sqrt(halfX*halfX + halfZ*halfZ + halfY*halfY);
+
+  controls.target.set(cx, 0, 0);
+  frameCamera();
+}
+
+// X positions of the appended stages (right of attn output, slot 11)
+let RES1_X=0, MUP_X=0, MIN_X=0, MDN_X=0, RES2_X=0, LOUT_X=0;
+let MLP_HALFZ=0; // widest Z extent of the MLP/MoE block, for camera framing
+
+// -------- residual → MLP/MoE → residual → layer output --------
+// Shapes are faithful to SGLang LlamaMLP: gate_up_proj is hidden→inter (ColumnParallel),
+// down_proj is inter→hidden (RowParallel). inter > hidden, so the intermediate activation
+// (seq×inter) is drawn WIDER than the seq×d_model hidden heads → the expand/contract reads.
+// DP: Dense builds a full independent MLP tail per lane; MoE builds ONE shared experts block
+// (centred at z=0) that all lanes all-to-all into, with per-lane gate + res2/output.
+function buildLayerRight(dmodel, seq, headLY, dTop, laneZ, addLabel, addChildLabel){
+  const tp=cfg.tp||1, dp=cfg.dp||1;
+  let inter = Math.round(dmodel*2.5); inter = Math.max(tp, Math.round(inter/tp)*tp);
+  const interTop = inter*0.62/2 + 1.5;   // label height above the tall down_proj matrix
+  MLP_HALFZ = inter*0.62/2 + 2;
+  const tokY=i=>(i-(seq-1)/2)*1.0;
+
+  // ===== residual ②  +  layer output for one lane d (per-rank tail, at laneZ) =====
+  // Returns {res2, lout, res2Line, res2ArcFrom}. Built for BOTH Dense and MoE (per-rank).
+  function buildLaneTail(d){
+    const dz = laneZ(d);
+    const r2=makeHead(COL.res, seq, 0.9, dmodel, 'z'); r2.position.set(RES2_X,0,dz);
+    root.add(r2);
+    addLabel((dp>1?"["+d+"] ":"")+"\u2295 \u6b8b\u5dee\u2461", RES2_X, dz, COL.res, r2, headLY);
+    // skip arc: hidden bypassing MLP/MoE, from this lane's res1 to res2 (dips below axis)
+    const r2Line=arc(new THREE.Vector3(RES1_X,-0.4,dz), new THREE.Vector3(RES2_X,-0.4,dz), COL.res, 0.0, -3.4);
+    root.add(r2Line);
+    const lout=makeHead(COL.lout, seq, 0.9, dmodel, 'z'); lout.position.set(LOUT_X,0,dz);
+    root.add(lout);
+    addLabel((dp>1?"["+d+"] ":"")+"layer output", LOUT_X, dz, COL.lout, lout, headLY);
+    const tail={res2:r2, lout, res2Line:r2Line};
+    parts.laneTails[d]=tail; return tail;
+  }
+
+  if(cfg.mlp==="DENSE"){
+    // Each DP lane is a fully independent Transformer layer → its own MLP tail.
+    const iPer = inter/tp;
+    const iBounds = ()=>{const a=[];for(let k=1;k<tp;k++)a.push(k*iPer);return a;};
+    const wUpCol = tp>1 ? ((i,j)=>GPU_COLS[Math.floor(j/iPer)%GPU_COLS.length]) : null; // col-parallel
+    const wUpDivs= tp>1 ? {axis:'col', at:iBounds()} : null;
+    const wDnRow = tp>1 ? ((i,j)=>GPU_COLS[Math.floor(i/iPer)%GPU_COLS.length]) : null; // row-parallel
+    const wDnDivs= tp>1 ? {axis:'row', at:iBounds()} : null;
+    const dnRowY = r => ((r*iPer + iPer/2 - 0.5) - (inter-1)/2)*0.62;
+
+    for(let d=0; d<dp; d++){
+      const dz=laneZ(d), M={};
+      // gate_up_proj: standing weight hidden(rows) × inter(cols) → wider than W_Q
+      M.wUp = makeMatrix(dmodel, inter, COL.wUp, 'stand', false, undefined, undefined, wUpCol, wUpDivs);
+      M.wUp.position.set(MUP_X,0,dz); root.add(M.wUp);
+      addChildLabel(M.wUp, tp>1?"gate_up_proj col-parallel":"gate_up_proj (hidden\u2192inter)", dTop, 0x8fb8ff);
+      // SiluAndMul → seq × inter (wider than hidden heads)
+      M.interAct = makeHead(COL.inter, seq, 0.9, inter, 'z'); M.interAct.position.set(MIN_X,0,dz);
+      root.add(M.interAct); addChildLabel(M.interAct, "SiluAndMul \u2192 seq\u00d7inter", headLY, COL.inter);
+      // down_proj: standing weight inter(rows) × hidden(cols) → taller than W_Q
+      M.wDn = makeMatrix(inter, dmodel, COL.wDn, 'stand', false, undefined, undefined, wDnRow, wDnDivs);
+      M.wDn.position.set(MDN_X,0,dz); root.add(M.wDn);
+      addChildLabel(M.wDn, tp>1?"down_proj row-parallel+AllReduce":"down_proj (inter\u2192hidden)", interTop, 0x7fd4dd);
+      // AllReduce lines from each rank's down_proj row-block centre → this lane's res2
+      M.arLines=[]; if(tp>1) for(let r=0;r<tp;r++){ const l=line(new THREE.Vector3(MDN_X,dnRowY(r),dz),
+        new THREE.Vector3(RES2_X,0,dz), COL.comm, 0.0); root.add(l); M.arLines.push(l); }
+      const tail=buildLaneTail(d); tail.mlp=M;
+    }
+    parts.moe=null;
+    return;
+  }
+
+  // ===== MoE: ONE shared experts block (centred z=0); lanes all-to-all into it =====
+  const NE=8, ep=cfg.ep, perRank=NE/ep;
+  const topk=Math.min(cfg.topk||2, NE);
+  // enlarged experts: bigger blocks + wider Z fan. eUX/eTh kept so the X extent (±(eUX+eTh/2)
+  // ≈ ±3.85) still clears gate (MUP_X) and res2 (RES2_X), each ~7.5 away → ~3.3 gap each side.
+  const eZ = 6.0, zOf = e => (e-(NE-1)/2)*eZ, eUX = 3.3;
+  const mI = 4.2, hI = 2.0, sI = 2.0, eTh = 1.1;
+  const expX=(MUP_X+RES2_X)/2;                 // experts centred between gate and res2 in X
+  const experts=new THREE.Group(); experts.position.set(expX,0,0);
+  const expCells=[], expAnchor=[];
+  for(let e=0;e<NE;e++){
+    const rank=Math.floor(e/perRank), col=GPU_COLS[rank%GPU_COLS.length], z=zOf(e);
+    const up =cube(col);       up.scale.set(eTh,hI,mI);  up.position.set(-eUX,0,z); // gate_up weight → wide
+    const mid=cube(COL.inter); mid.scale.set(eTh,sI,mI); mid.position.set(0,0,z);    // moe_inter activation → wide (green)
+    const dn =cube(col);       dn.scale.set(eTh,mI,hI);  dn.position.set(eUX,0,z);   // down weight → tall
+    experts.add(up,mid,dn);
+    expCells.push({mesh:up,mat:up.userData.mat},{mesh:mid,mat:mid.userData.mat},{mesh:dn,mat:dn.userData.mat});
+    expAnchor.push({up:new THREE.Vector3(expX-eUX,0,z), dn:new THREE.Vector3(expX+eUX,0,z)});
+  }
+  if(ep>1) for(let r=1;r<ep;r++){ const bz=(zOf(r*perRank-1)+zOf(r*perRank))/2;
+    experts.add(line(new THREE.Vector3(-eUX-0.8,0,bz), new THREE.Vector3(eUX+0.8,0,bz), 0xd0d8e4, 0.5)); }
+  experts.userData.cells=expCells; root.add(experts);
+  addLabel(NE+" routed experts \u00b7 top-k("+topk+")/token \u00b7 EP ("+perRank+"/GPU\u00d7"+ep+")"+(dp>1?" \u00b7 shared across "+dp+" DP ranks":""),
+    expX, 0, 0x8fb8ff, experts, mI/2+2.0);
+
+  const routeOf=i=>{ const a=[]; for(let k=0;k<topk;k++) a.push((i*2+k*3)%NE); return a; };
+  const MO={ experts, shareds:[], gates:[], dispatch:[], combine:[], sharedLines:[] };
+  // shared expert is REPLICATED per DP rank (each independent MoE forward has its own copy;
+  // it fires for every token of that rank, no routing). So DP>1 → one shared block per lane,
+  // sitting below that lane's band. Routed experts stay a single EP-sharded central block.
+  // shared replica hangs below its lane in Y. Clear the lane's tallest Y element: standing
+  // matrices reach ±inter*0.62/2 (down_proj is inter-tall), so drop below that + margin.
+  const shDrop = -( inter*0.62/2 + mI/2 + 2.5 );
+  for(let d=0; d<dp; d++){
+    const dz=laneZ(d);
+    // per-lane gate (hidden→NE)
+    const gate = makeMatrix(dmodel, NE, COL.router, 'stand', false, undefined, undefined, null, null);
+    gate.position.set(MUP_X,0,dz); root.add(gate); MO.gates.push(gate);
+    addChildLabel(gate, (dp>1?"["+d+"] ":"")+"gate\u2192top-k("+topk+")", dTop, COL.router);
+    // all-to-all dispatch (this lane's tokens → central experts) and combine (→ this lane's res2)
+    for(let i=0;i<seq;i++) for(const e of routeOf(i)){ const a=expAnchor[e];
+      const l=line(new THREE.Vector3(RES1_X,tokY(i),dz), a.up, COL.comm, 0.0); root.add(l); MO.dispatch.push(l); }
+    for(let i=0;i<seq;i++) for(const e of routeOf(i)){ const a=expAnchor[e];
+      const l=line(a.dn, new THREE.Vector3(RES2_X,tokY(i),dz), COL.comm, 0.0); root.add(l); MO.combine.push(l); }
+    // this lane's own shared-expert replica (dense SwiGLU): SAME Z band as the lane (z=dz),
+    // dropped below the axis in Y so it hangs under that lane's pipeline. shDrop is a fixed
+    // negative Y (not a Z offset) — clears the lane's heads/MLP which sit around y≈0.
+    const shX = expX, shZ = dz;
+    const shared=new THREE.Group(); shared.position.set(shX,shDrop,shZ); const shCells=[];
+    const su=cube(COL.shared); su.scale.set(eTh,hI,mI); su.position.set(-eUX,0,0);
+    const sm=cube(COL.inter);  sm.scale.set(eTh,sI,mI); sm.position.set(0,0,0);
+    const sd=cube(COL.shared); sd.scale.set(eTh,mI,hI); sd.position.set(eUX,0,0);
+    shared.add(su,sm,sd);
+    shCells.push({mesh:su,mat:su.userData.mat},{mesh:sm,mat:sm.userData.mat},{mesh:sd,mat:sd.userData.mat});
+    shared.userData.cells=shCells; root.add(shared); MO.shareds.push(shared);
+    addLabel((dp>1?"["+d+"] ":"")+"shared expert (dense · all tokens)", shX, shZ, COL.shared, shared, shDrop+mI/2+1.5);
+    // this lane's tokens → its own shared replica → back to its res2, all within z=dz band
+    for(let i=0;i<seq;i++){
+      const li=line(new THREE.Vector3(RES1_X,tokY(i),dz), new THREE.Vector3(shX-eUX,shDrop,shZ), COL.shared, 0.0);
+      const lo=line(new THREE.Vector3(shX+eUX,shDrop,shZ), new THREE.Vector3(RES2_X,tokY(i),dz), COL.shared, 0.0);
+      root.add(li); root.add(lo); MO.sharedLines.push(li,lo);
+    }
+    buildLaneTail(d);
+  }
+  parts.moe=MO;
+  // central experts' Z fan; shared replicas share the lane Z bands (already in dpHalfZ)
+  MLP_HALFZ = Math.max(MLP_HALFZ, NE*eZ/2 + 2);
+}
+
+// single-material box / cube / label / arc helpers for the appended stages
+function makeBox(w,h,d,color){ const m=mat(color,1); const c=new THREE.Mesh(boxGeo,m);
+  c.scale.set(w,h,d); const g=new THREE.Group(); g.add(c); g.userData.mat=m; return g; }
+function cube(color){ const m=mat(color,1); const c=new THREE.Mesh(boxGeo,m); c.scale.setScalar(0.72);
+  c.userData.mat=m; return c; }
+function addRootLabel(txt,x,y,z,hex,owner){ const s=makeLabel(txt,hex); s.position.set(x,y,z);
+  root.add(s); parts.labels.push({sp:s,owner}); return s; }
+function arc(a,b,color,opacity,lift){ const pts=[]; const n=28;
+  const mid=new THREE.Vector3((a.x+b.x)/2,(a.y+b.y)/2+(lift??10),(a.z+b.z)/2);
+  for(let i=0;i<=n;i++){ const t=i/n, it=1-t;
+    pts.push(new THREE.Vector3(it*it*a.x+2*it*t*mid.x+t*t*b.x, it*it*a.y+2*it*t*mid.y+t*t*b.y, it*it*a.z+2*it*t*mid.z+t*t*b.z)); }
+  const geo=new THREE.BufferGeometry().setFromPoints(pts);
+  return new THREE.Line(geo, new THREE.LineBasicMaterial({color,transparent:true,opacity:opacity??0.5,
+    blending:THREE.AdditiveBlending, depthWrite:false})); }
+// ---------- step state ----------
+let step = 0, playing = false, stepT = 0;
+const STEP_DUR = 3.2; // seconds per step when playing
+
+// covers single mat (heads/boxes), block mats (TP-tinted weights) and per-cell mats
+// (MLP lanes, experts) — else those groups ignore the highlight and the per-frame reset.
+function setEmissive(grp, v){ if(!grp)return;
+  if(grp.userData.mat) grp.userData.mat.emissiveIntensity = v;
+  if(grp.userData.mats) grp.userData.mats.forEach(m=>m.emissiveIntensity=v);
+  if(grp.userData.cells) grp.userData.cells.forEach(c=>c.mat.emissiveIntensity=v); }
+function matSet(m, v){ if(m&&m.userData.cells) m.userData.cells.forEach(c=>c.mat.emissiveIntensity=v); }
+function setLineOpacity(ln, v){ ln.material.opacity = v; }
+// set a group's opacity across whichever material shape it has (head=single, matrix=cells)
+function setGroupOpacity(grp, v){
+  if(!grp) return;
+  if(grp.userData.mat) grp.userData.mat.opacity = v;
+  if(grp.userData.mats) grp.userData.mats.forEach(m=>m.opacity=v);
+  if(grp.userData.cells) grp.userData.cells.forEach(c=>c.mat.opacity=v);
+}
+// which element groups are the "protagonists" of each step, collected across ALL DP lanes.
+// steps: 0-5 attention · 6 res① · 7 mlp-up · 8 mlp-down · 9 res② → layer output
+function relevantGroups(s){
+  const R=[], MO=parts.moe;
+  parts.lanes.forEach((L,d)=>{
+    const T=parts.laneTails[d]||{}, M=T.mlp||{};
+    const mlpGroups = cfg.mlp==="DENSE" ? [M.wUp,M.interAct,M.wDn]
+                                        : (MO ? [MO.gates[d],MO.experts,MO.shareds[d]] : []);
+    if(s===0) R.push(L.input,L.wQ,L.wK,L.wV,...L.qHeads,...L.kHeads,...L.vHeads);
+    else if(s===1) R.push(...L.qHeads,...L.kHeads,...L.vHeads);
+    else if(s===2) R.push(...L.qHeads,...L.kHeads,L.scores);
+    else if(s===3) R.push(L.scores,L.weights);
+    else if(s===4) R.push(L.weights,...L.vHeads,L.ctxVec);
+    else if(s===5) R.push(L.ctxVec,L.wO,L.out);
+    else if(s===6) R.push(L.out,L.res1);
+    else if(s===7) R.push(L.res1,...mlpGroups);
+    else if(s===8) R.push(...mlpGroups,T.res2);
+    else if(s===9) R.push(T.res2,T.lout);
+  });
+  return new Set(R.filter(Boolean));
+}
+// every focusable group in the scene (all lanes + tails + shared MoE)
+function allFocusable(){
+  const out=[], MO=parts.moe;
+  parts.lanes.forEach(L=> out.push(L.input,L.wQ,L.wK,L.wV,...L.qHeads,...L.kHeads,...L.vHeads,
+    L.scores,L.weights,L.ctxVec,L.wO,L.out,L.res1));
+  parts.laneTails.forEach(T=>{ out.push(T.res2,T.lout);
+    if(T.mlp) out.push(T.mlp.wUp,T.mlp.interAct,T.mlp.wDn); });
+  if(MO) out.push(MO.experts, ...MO.shareds, ...MO.gates);
+  return out.filter(Boolean);
+}
+// the active step's groups grow (scale 1.0); off-step groups stay FULLY OPAQUE and equally
+// crisp, just not enlarged (scale 0.78). Focus is signalled by size only, never by fading —
+// so every block reads clearly at all times, and the current step simply pops larger.
+function applyFocus(dt){
+  const rel = relevantGroups(step);
+  const k = 1 - Math.pow(0.001, dt); // frame-rate independent smoothing
+  allFocusable().forEach(g=>{
+    const target = rel.has(g) ? 1 : 0;                  // focus factor (1=active step)
+    const f = g.userData.focus ?? target;
+    const nf = f + (target - f) * k;
+    g.userData.focus = nf;
+    const sc = 0.78 + 0.22*nf;                          // scale 0.78 (off) .. 1.0 (active)
+    g.scale.setScalar(sc);
+    setGroupOpacity(g, 1.0);                             // always fully opaque — crisp everywhere
+  });
+  // fade each label with the focus of the element it belongs to
+  parts.labels.forEach(({sp, owner})=>{
+    const nf = owner ? (owner.userData.focus ?? 1) : 1;
+    sp.material.opacity = 0.12 + 0.88*nf; // unfocused labels nearly vanish
+  });
+}
+
+// attention steps 0-6 for ONE lane L (identical to the original single-pipeline animation).
+function applyAttnStep(L, step, p, g, perGroup, BASE, DIM, ACT){
+  if(step===0){ // projection: X × W_{Q,K,V} → Q,K,V
+    setEmissive(L.input, ACT);
+    setEmissive(L.wQ, ACT); setEmissive(L.wK, ACT); setEmissive(L.wV, ACT);
+    L.qHeads.forEach(h=>setEmissive(h, BASE + (ACT-BASE)*p));
+    L.kHeads.forEach(h=>setEmissive(h, BASE + (ACT-BASE)*p));
+    L.vHeads.forEach(h=>setEmissive(h, BASE + (ACT-BASE)*p));
+  } else if(step===1){ // grouping: highlight one group's share lines
+    const from=g*perGroup, to=(g+1)*perGroup;
+    L.qHeads.forEach((h,i)=>setEmissive(h,(i>=from&&i<to)?ACT:DIM));
+    setEmissive(L.kHeads[g], ACT);
+    L.shareLines.forEach((l,i)=>setLineOpacity(l, Math.floor(i/perGroup)===g?0.85*p:0.12));
+  } else if(step===2){ // QK^T scores
+    const from=g*perGroup, to=(g+1)*perGroup;
+    L.qHeads.forEach((h,i)=>setEmissive(h,(i>=from&&i<to)?ACT:DIM));
+    setEmissive(L.kHeads[g], ACT);
+    L.shareLines.forEach((l,i)=>setLineOpacity(l, Math.floor(i/perGroup)===g?0.55:0.1));
+    const cells = L.scores.userData.cells;
+    cells.forEach((c,idx)=>c.mat.emissiveIntensity = (idx < p*cells.length)?0.85:BASE);
+  } else if(step===3){ // softmax
+    L.scores.userData.cells.forEach(c=>c.mat.emissiveIntensity=DIM);
+    L.weights.userData.cells.forEach(c=>{ const rowP=Math.min(Math.max(p*cfg.seq - c.i,0),1);
+      c.mat.emissiveIntensity = BASE + 0.6*rowP; });
+  } else if(step===4){ // weighted × V → context
+    L.weights.userData.cells.forEach(c=>c.mat.emissiveIntensity=0.55);
+    setEmissive(L.vHeads[g], ACT);
+    setEmissive(L.ctxVec, BASE + (ACT-BASE)*p);
+    const from=g*perGroup, to=(g+1)*perGroup;
+    L.qHeads.forEach((h,i)=>setEmissive(h,(i>=from&&i<to)?(BASE+(ACT-BASE)*p):DIM));
+  } else if(step===5){ // output projection: context × W_O → attn output
+    L.qHeads.forEach(h=>setEmissive(h, DIM));
+    setEmissive(L.ctxVec, ACT); setEmissive(L.wO, ACT);
+    setEmissive(L.out, BASE + (ACT-BASE)*p);
+  } else if(step===6){ // residual① : attn output + X
+    setEmissive(L.out, 0.5); setEmissive(L.res1, ACT);
+    if(L.res1Line) L.res1Line.material.opacity=0.7*p;
+  }
+}
+
+// smooth ramp 0..1 across the step
+function updateScene(dt, t){
+  if(!parts) return;
+  stepT += dt;
+  if(playing && stepT > STEP_DUR){ next(); }
+  applyFocus(dt); // relevant elements grow/brighten, others shrink/fade (never hidden)
+  const p = Math.min(stepT/1.0, 1); // reveal progress for current step
+  const BASE = 0.34;              // every head always self-glows this much (color reads)
+  const DIM  = 0.22;              // de-emphasized (not in the active group)
+  const ACT  = BASE + 0.30 + 0.30*Math.sin(t*3); // active pulse, always > BASE
+  const g = parts.group, perGroup = cfg.Hq/cfg.Hkv;
+  const MO = parts.moe;
+
+  // ---- reset everything to baseline every frame (never fully dark) ----
+  parts.lanes.forEach(L=>{
+    setEmissive(L.input, BASE); setEmissive(L.out, BASE); setEmissive(L.res1, BASE);
+    setEmissive(L.wQ, BASE); setEmissive(L.wK, BASE); setEmissive(L.wV, BASE);
+    setEmissive(L.wO, BASE); setEmissive(L.ctxVec, BASE);
+    L.qHeads.forEach(h=>setEmissive(h, BASE));
+    L.kHeads.forEach(h=>setEmissive(h, BASE));
+    L.vHeads.forEach(h=>setEmissive(h, BASE));
+    L.shareLines.forEach(l=>setLineOpacity(l, 0.0));
+    L.scores.userData.cells.forEach(c=>c.mat.emissiveIntensity=BASE);
+    L.weights.userData.cells.forEach(c=>c.mat.emissiveIntensity=BASE);
+    if(L.res1Line) L.res1Line.material.opacity=0.0;
+  });
+  parts.laneTails.forEach(T=>{
+    setEmissive(T.res2, BASE); setEmissive(T.lout, BASE);
+    if(T.res2Line) T.res2Line.material.opacity=0.0;
+    if(T.mlp){ setEmissive(T.mlp.wUp,BASE); setEmissive(T.mlp.interAct,BASE); setEmissive(T.mlp.wDn,BASE);
+      if(T.mlp.arLines) T.mlp.arLines.forEach(l=>l.material.opacity=0.0); }
+  });
+  if(MO){ setEmissive(MO.experts, BASE); MO.shareds.forEach(x=>setEmissive(x,BASE));
+    MO.gates.forEach(x=>setEmissive(x,BASE));
+    MO.dispatch.forEach(l=>l.material.opacity=0.0);
+    MO.combine.forEach(l=>l.material.opacity=0.0);
+    MO.sharedLines.forEach(l=>l.material.opacity=0.0); }
+
+  // ---- attention steps 0-6: run per lane (all DP lanes animate together) ----
+  if(step<=6){ parts.lanes.forEach(L=>applyAttnStep(L, step, p, g, perGroup, BASE, DIM, ACT)); return; }
+
+  // ---- MLP/MoE steps 7-9 ----
+  if(cfg.mlp==="DENSE"){
+    parts.laneTails.forEach(T=>{ const M=T.mlp; if(!M) return;
+      if(step===7){ setEmissive(M.wUp,ACT); setEmissive(M.interAct,BASE+(ACT-BASE)*p); }
+      else if(step===8){ setEmissive(M.interAct,0.6); setEmissive(M.wDn,ACT);
+        if(M.arLines) M.arLines.forEach(l=>l.material.opacity=0.7*p); }
+      else if(step===9){ setEmissive(T.res2,ACT);
+        if(T.res2Line) T.res2Line.material.opacity=0.7*p;
+        setEmissive(T.lout, BASE+(ACT-BASE)*p); }
+    });
+  } else if(MO){
+    if(step===7){ // dispatch: lanes all-to-all into shared experts
+      MO.gates.forEach(x=>setEmissive(x,ACT)); MO.shareds.forEach(x=>setEmissive(x,0.4));
+      MO.dispatch.forEach(l=>l.material.opacity=0.7*p);
+      setEmissive(MO.experts, BASE+(0.6-BASE)*p);
+    } else if(step===8){ // experts compute + combine back + shared
+      setEmissive(MO.experts,ACT); MO.shareds.forEach(x=>setEmissive(x,ACT));
+      MO.combine.forEach(l=>l.material.opacity=0.7*p);
+      MO.sharedLines.forEach(l=>l.material.opacity=0.6*p);
+    } else if(step===9){ // residual② → layer output, per lane
+      parts.laneTails.forEach(T=>{ setEmissive(T.res2,ACT);
+        if(T.res2Line) T.res2Line.material.opacity=0.7*p;
+        setEmissive(T.lout, BASE+(ACT-BASE)*p); });
+    }
+  }
+}
+// all elements stay visible the whole time; steps are shown via emissive highlight only.
+// double-click / double-tap resets the camera to the default iso angle framing everything.
+function resetView(){
+  if(!parts) return;
+  viewInit = false; // force the default iso angle on the next frame
+  frameCamera();
+}
+// ---------- controls & i18n ----------
+const $ = id => document.getElementById(id);
+function gotoStep(s){
+  step = ((s % STEPS.length) + STEPS.length) % STEPS.length;
+  stepT = 0;
+  parts.group = (step>=1) ? (parts.group % cfg.Hkv) : 0;
+  renderHUD(); // note: camera is NOT touched here — keeps the user's chosen angle
+}
+function next(){ gotoStep(step+1); }
+function prev(){ gotoStep(step-1); }
+
+// legend rebuilds with the head colouring: tp=1 → Q/K/V; tp>1 → one swatch per GPU rank
+// (+ a grey "KV replica" swatch when Hkv<tp, matching the greyed KV heads/weights).
+const hex6 = n => "#"+n.toString(16).padStart(6,"0");
+function renderLegend(u){
+  const el = $("legend"); if(!el) return;
+  const tp = cfg.tp||1, dp = cfg.dp||1, items = [];
+  // tp>1 colours the heads by TP rank; under DP each lane replicates those same TP ranks,
+  // so the swatch means "TP rank r" (present in every DP lane), not one unique GPU.
+  const rankLbl = dp>1 ? (u.gpu+"/TP ") : (u.gpu+" ");
+  if(tp<=1){
+    items.push(["var(--q)", u.q], ["var(--k)", u.k], ["var(--v)", u.v]);
+  } else {
+    for(let r=0;r<tp;r++) items.push([hex6(GPU_COLS[r % GPU_COLS.length]), rankLbl+r]);
+    if(cfg.Hkv < tp) items.push([hex6(REPLICATE_COL), u.kvrep]);
+  }
+  if(dp>1) items.push([hex6(0x9aa7b8), u.dp+"\u00d7"+dp+" lanes"]);
+  items.push([hex6(COL.res), u.res]);
+  if(cfg.mlp==="MOE") items.push([hex6(COL.shared), "shared expert"], [hex6(COL.comm), "all-to-all"]);
+  else if(tp>1) items.push([hex6(COL.comm), "AllReduce"]);
+  el.innerHTML = items.map(([c,t])=>
+    '<span><i style="background:'+c+'"></i>'+t+'</span>').join("");
+}
+
+function renderHUD(){
+  const u = UI[LANG];
+  const md = MODES[cfg.mode] || MODES.GQA;
+  const dp=cfg.dp||1, tp=cfg.tp||1;
+  const par = (dp>1?"DP"+dp+" ":"") + (tp>1?"TP"+tp+" ":"") + (cfg.mlp==="MOE"?"EP"+cfg.ep:"");
+  const gpuTag = (dp>1||tp>1) ? "  ·  "+(dp*tp)+" GPU"+(dp*tp>1?"s":"")+(par?" ("+par.trim()+")":"") : "";
+  $("title").textContent = md.title[LANG] + " · " + (cfg.mlp==="MOE"?"MoE":"Dense") + gpuTag;
+  $("stepName").textContent = STEPS[step].name[LANG];
+  // steps 0/1 read per attention mode; steps 6-9 (residual/MLP/MoE) come from XDESC
+  let desc = STEPS[step].desc ? STEPS[step].desc[LANG] : "";
+  if(step===0) desc = md.proj[LANG];
+  else if(step===1) desc = md.grp[LANG];
+  else if(step===6) desc = XDESC.res1[LANG];
+  else if(step===7) desc = XDESC.mlpUp[cfg.mlp][LANG];
+  else if(step===8) desc = XDESC.mlpDown[cfg.mlp][LANG];
+  else if(step===9) desc = XDESC.res2[LANG];
+  // DP-attention note: each lane is an independent DP rank (own tokens + own KV, no replication).
+  if((cfg.dp||1)>1){
+    if(step<=6) desc += LANG==="zh"
+      ? " ｜ DP-attention：每个 DP rank 独立算自己那批 token 的 attention、各持自己的 KV（不复制）。"
+      : " | DP-attention: each DP rank runs attention on its own tokens with its own KV (not replicated).";
+    else if(cfg.mlp==="MOE" && (step===7||step===8)) desc += LANG==="zh"
+      ? " ｜ 各 DP rank 的 token 经 all-to-all 汇聚到共享 experts（喂胖 GEMM），算完再散回各 rank。"
+      : " | Tokens from all DP ranks are all-to-all gathered into the shared experts (fat GEMM), then scattered back.";
+  }
+  $("stepDesc").textContent = desc;
+  renderLegend(u);
+  $("tPrev").textContent = u.prev; $("tNext").textContent = u.next;
+  $("btnPlay").textContent = playing ? u.pause : u.play;
+  $("tMode").textContent = u.mode; $("tMlp").textContent = u.mlp;
+  $("tHq").textContent = u.hq; $("tHkv").textContent = u.hkv; $("tSeq").textContent = u.seq;
+  $("tTP").textContent = u.tp; $("tEP").textContent = u.ep; $("tTopk").textContent = u.topk;
+  $("tDP").textContent = u.dp;
+  $("tHome").textContent = u.home;
+  $("btnLang").textContent = LANG==="zh" ? "EN" : "中文";
+  document.documentElement.lang = LANG;
+  $("grpEP").style.display = (cfg.mlp==="MOE") ? "" : "none";
+  $("grpTopk").style.display = (cfg.mlp==="MOE") ? "" : "none";
+}
+
+canvas.addEventListener("dblclick", resetView); // double-click to recenter the view
+$("btnNext").onclick = next;
+$("btnPrev").onclick = prev;
+$("btnPlay").onclick = ()=>{ playing=!playing; stepT=0; renderHUD(); };
+$("btnLang").onclick = ()=>{ LANG = LANG==="zh"?"en":"zh"; renderHUD(); };
+
+function syncParams(){
+  cfg.mode = $("selMode").value;
+  cfg.mlp  = $("selMlp").value;
+  cfg.ep   = +$("selEP").value;
+  cfg.topk = +$("selTopk").value;
+  cfg.dp   = +$("selDP").value;
+  cfg.Hq  = +$("selHq").value;
+  cfg.seq = +$("selSeq").value;
+  // TP: each GPU gets Hq/tp query heads → tp must divide Hq (clamp down to the largest valid power)
+  let tp = +$("selTP").value;
+  while(tp>1 && cfg.Hq % tp !== 0) tp >>= 1;   // Hq & tp are powers of 2, so halving lands on a divisor
+  cfg.tp = tp; $("selTP").value = String(tp);
+  // mode drives the K/V head count
+  if(cfg.mode==="MHA")      cfg.Hkv = cfg.Hq;                 // one K/V per Q head
+  else if(cfg.mode==="MQA") cfg.Hkv = 1;                      // single shared K/V head
+  else {                                                       // GQA: user picks, must be 1<Hkv<Hq & divide Hq
+    let h = +$("selHkv").value;
+    if(cfg.Hq % h !== 0 || h>=cfg.Hq || h<1) h = gcdDivisor(cfg.Hq, Math.min(h,cfg.Hq-1));
+    cfg.Hkv = h; $("selHkv").value = String(h);
+  }
+  // the Hkv selector only applies to GQA — grey it out otherwise
+  $("selHkv").disabled = (cfg.mode!=="GQA");
+  build(); gotoStep(step);
+}
+function gcdDivisor(hq,hkv){ // largest divisor of hq that is <= hkv and < hq
+  for(let d=Math.min(hkv,hq-1); d>=1; d--) if(hq%d===0) return d; return 1; }
+$("selMode").onchange = syncParams;
+$("selMlp").onchange = syncParams;
+$("selEP").onchange = syncParams;
+$("selTopk").onchange = syncParams;
+$("selDP").onchange = syncParams;
+$("selHq").onchange = syncParams;
+$("selHkv").onchange = syncParams;
+$("selSeq").onchange = syncParams;
+$("selTP").onchange = syncParams;
+
+// ---------- boot ----------
+build();
+onResize();   // size the canvas drawing buffer to the window NOW (else it stays 300x150 → blurry)
+gotoStep(0);
+renderHUD();
+animate();
+</script>
+</body>
+</html>

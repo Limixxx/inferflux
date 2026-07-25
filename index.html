@@ -132,6 +132,32 @@ const CARDS = [
       { zh: "MBU", en: "MBU" },
     ],
   },
+  {
+    href: "transformer-3d.html", icon: "\u{1F9E0}",
+    title: { zh: "请求生命周期 3D", en: "Request Lifecycle 3D" },
+    sub: {
+      zh: "按真实执行顺序展示一个请求的完整生命周期（对齐 SGLang eagle_worker）：上层楼 = Prefill（目标主模型对整个 prompt 跑一次完整前向 → 出首 token → draft-extend 填 draft KV 热身），下层楼 = Decode 循环（draft 起草候选 → 目标层一次并行验证 → 接受+bonus → 回到 draft）。两份完整目标层各自展开：Attention（MHA/GQA/MQA）+ MLP/MoE（top-k + shared expert）+ TP/EP/DP 三种并行全保留。投机可选 DFLASH（并行 masked block）/ MTP（内置头串行链）。对齐 SGLang 与 vLLM 真实源码（含 DFlash+DP 引擎差异标注）。可鼠标旋转缩放。",
+      en: "The full request lifecycle in real execution order (faithful to SGLang's eagle_worker): upper floor = Prefill (the target model runs one full forward over the whole prompt → 1st token → draft-extend warms the draft KV); lower floor = the Decode loop (draft proposes candidates → the target layer verifies them in one parallel forward → accept+bonus → back to draft). Two full target layers, each fully expanded: attention (MHA/GQA/MQA) + MLP/MoE (top-k + shared expert) + TP/EP/DP parallelism. Speculation is DFLASH (parallel masked block) or MTP (built-in-head serial chain). Faithful to real SGLang & vLLM source (incl. the DFlash+DP engine-difference note). Drag to rotate, scroll to zoom.",
+    },
+    tags: [
+      { zh: "投机 (DFlash/MTP)", en: "Spec (DFlash/MTP)" },
+      { zh: "MoE / TP / EP / DP", en: "MoE / TP / EP / DP" },
+      { zh: "3D", en: "3D", accent: true },
+    ],
+  },
+  {
+    href: "collective-3d.html", icon: "\u{1F310}",
+    title: { zh: "GPU 集合通信 3D 动画", en: "GPU Collective Communication 3D" },
+    sub: {
+      zh: "多卡集合通信的 3D 分步演示：AllReduce（Ring 两阶段 ReduceScatter+AllGather）、AllGather、ReduceScatter、Broadcast、All-to-All。数据块按来源 GPU 着色，可切换 GPU 数（2/4/8）。可鼠标旋转缩放。",
+      en: "Step-by-step 3D walkthrough of GPU collectives: AllReduce (Ring = ReduceScatter + AllGather), AllGather, ReduceScatter, Broadcast, All-to-All. Data chunks coloured by source GPU; switch GPU count (2/4/8). Drag to rotate, scroll to zoom.",
+    },
+    tags: [
+      { zh: "分布式", en: "Distributed" },
+      { zh: "NCCL", en: "NCCL" },
+      { zh: "3D", en: "3D", accent: true },
+    ],
+  },
 ];
 
 const I18N = {

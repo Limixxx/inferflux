@@ -21,6 +21,22 @@ Open `index.html` in a browser. No install, no build, no server.
 每个页面都是自包含的静态 HTML 文件（CSS + DOM + JS），可单独分发。
 Every page is a self-contained static HTML file — copy one file and it just works.
 
+### 本地启动 · Run locally
+
+若需在本地通过 HTTPS 访问（部分页面需要安全上下文），先生成自签名证书（仓库未包含），再运行内置的 HTTPS server：
+For local access over HTTPS (some pages require a secure context), first generate a self-signed cert (not included in the repo), then start the bundled HTTPS server:
+
+```bash
+# 生成自签名证书 · generate a self-signed cert
+openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+  -keyout server/key.pem -out server/cert.pem -subj "/CN=localhost"
+
+# 启动 · start
+python3 server/https_server.py
+```
+
+然后浏览器打开 · then open **https://localhost:8888/**（自签名证书，首次访问需手动信任 · self-signed cert, accept the warning on first visit）。
+
 ## 协议 · License
 
 本项目采用 [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)（署名-非商业）协议。

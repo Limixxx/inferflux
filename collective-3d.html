@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; base-uri 'self'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>InferFlux · Collective 3D</title>
+<style>
+:root{ --bg:#0d1117; --panel:#161b22cc; --border:#2d3646; --text:#e6edf3;
+  --muted:#8b98a9; --accent:#4ea1ff; --cyan:#39c5cf; }
+*{box-sizing:border-box; margin:0; padding:0;}
+html,body{height:100%;}
+body{background:var(--bg); color:var(--text); overflow:hidden;
+  font-family:-apple-system,"SF Pro","Segoe UI",Roboto,"PingFang SC",sans-serif;}
+#gl{display:block; width:100vw; height:100vh; cursor:grab; touch-action:none;}
+#gl:active{cursor:grabbing;}
+.hud{position:fixed; top:16px; left:16px; max-width:360px; pointer-events:none;}
+.hud .home{display:inline-block; pointer-events:auto; color:var(--muted); font-size:12px;
+  text-decoration:none; margin-bottom:6px;}
+.hud .home:hover{color:var(--accent);}
+.hud h1{font-size:15px; font-weight:700; margin-bottom:6px;}
+.hud .step{color:var(--accent); font-weight:600; font-size:13px;}
+.hud .desc{color:var(--muted); font-size:12px; line-height:1.6; margin-top:4px;}
+.legend{display:flex; flex-wrap:wrap; gap:10px 14px; margin-top:10px; font-size:11px; color:var(--muted);}
+.legend i{display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:middle;}
+.panel{position:fixed; bottom:16px; left:50%; transform:translateX(-50%);
+  background:var(--panel); backdrop-filter:blur(8px); border:1px solid var(--border);
+  border-radius:12px; padding:12px 16px; display:flex; align-items:center; gap:14px; font-size:12px;}
+.panel button{background:#1c2330; border:1px solid var(--border); color:var(--text);
+  border-radius:7px; padding:6px 12px; cursor:pointer; font-size:12px;}
+.panel button:hover{border-color:var(--accent);}
+.panel button.primary{background:var(--accent); border-color:var(--accent); color:#08111e; font-weight:600;}
+.panel .grp{display:flex; align-items:center; gap:6px; color:var(--muted);}
+.panel select{background:#1c2330; border:1px solid var(--border); color:var(--text);
+  border-radius:6px; padding:4px 6px; font-size:12px;}
+.badge{position:fixed; bottom:16px; right:16px; color:var(--muted); font-size:11px;}
+#btnLang{position:fixed; top:16px; right:16px; background:#1c2330; border:1px solid var(--border);
+  color:var(--text); border-radius:6px; padding:4px 10px; cursor:pointer; font-size:12px;}
+@media (max-width:640px){
+  .hud{max-width:none; right:16px; top:12px; left:12px;}
+  .badge{display:none;}
+  .panel{left:8px; right:8px; transform:none; bottom:10px; gap:8px 10px;
+    flex-wrap:wrap; justify-content:center; padding:10px 12px;}
+}
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div class="hud">
+  <a class="home" href="index.html">← <span id="tHome"></span></a>
+  <h1 id="title"></h1>
+  <div class="step" id="stepName"></div>
+  <div class="desc" id="stepDesc"></div>
+  <div class="legend" id="legend"></div>
+</div>
+<button id="btnLang">EN</button>
+<div class="panel">
+  <button id="btnPrev">‹ <span id="tPrev"></span></button>
+  <button class="primary" id="btnPlay"></button>
+  <button id="btnNext"><span id="tNext"></span> ›</button>
+  <span class="grp"><span id="tOp"></span>
+    <select id="selOp">
+      <option value="allreduce" selected>AllReduce</option>
+      <option value="allgather">AllGather</option>
+      <option value="reducescatter">ReduceScatter</option>
+      <option value="broadcast">Broadcast</option>
+      <option value="alltoall">All-to-All</option>
+    </select></span>
+  <span class="grp"><span id="tN"></span>
+    <select id="selN"><option>2</option><option selected>4</option><option>8</option></select></span>
+</div>
+<div class="badge">Three.js r0.185 · pure static</div>
+<script>
+// visible error overlay — shows load/runtime errors on screen instead of blank
+window.addEventListener("error", function(e){
+  var msg = e.message || (e.error && e.error.message) || String(e);
+  if(e.filename) msg += "  @ " + e.filename.split("/").pop() + ":" + e.lineno;
+  var d = document.createElement("div");
+  d.style.cssText = "position:fixed;left:8px;right:8px;bottom:80px;z-index:99;"+
+    "background:#2a1518;border:1px solid #f0a44a;border-radius:8px;padding:10px 12px;"+
+    "color:#f0a44a;font-size:12px;line-height:1.6;font-family:monospace;white-space:pre-wrap;";
+  d.textContent = "⚠ " + msg;
+  document.body.appendChild(d);
+});
+</script>
+<script type="module">
+import * as THREE from './vendor/three.module.js';
+import { OrbitControls } from './vendor/jsm/controls/OrbitControls.js';
+
+const $ = id => document.getElementById(id);
+
+// ---------- three.js scene ----------
+const canvas = $("gl");
+let renderer;
+try { renderer = new THREE.WebGLRenderer({canvas, antialias:true}); }
+catch(e){
+  document.body.insertAdjacentHTML("beforeend",
+    "<div style='position:fixed;inset:0;display:flex;align-items:center;justify-content:center;"+
+    "padding:24px;text-align:center;color:#f0a44a;font-size:14px;line-height:1.7'>"+
+    "WebGL 初始化失败 / WebGL init failed<br>"+String(e)+"</div>");
+  throw e;
+}
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x141b26);
+const FOV = 50;
+const camera = new THREE.PerspectiveCamera(FOV, innerWidth/innerHeight, 0.1, 500);
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true; controls.dampingFactor = 0.08;
+controls.target.set(0, 0, 0);
+
+let BOUND = 14;
+let viewInit = false;
+function frameCamera(){
+  const aspect = innerWidth/innerHeight;
+  const vFov = FOV*Math.PI/180;
+  const hFov = 2*Math.atan(Math.tan(vFov/2)*aspect);
+  const fit = Math.min(vFov, hFov);
+  const dist = (BOUND/Math.sin(fit/2)) * 0.9;
+  const dir = viewInit
+    ? new THREE.Vector3().subVectors(camera.position, controls.target).normalize()
+    : new THREE.Vector3(0.28, 0.66, 0.7).normalize();
+  viewInit = true;
+  camera.position.copy(controls.target).addScaledVector(dir, dist);
+  camera.near = Math.max(0.1, dist - BOUND*2);
+  camera.far  = dist + BOUND*2.5;
+  camera.updateProjectionMatrix();
+  controls.update();
+}
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.95));
+scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x1a2233, 0.7));
+const keyL = new THREE.DirectionalLight(0xffffff, 1.4); keyL.position.set(8,14,10); scene.add(keyL);
+const fillL = new THREE.DirectionalLight(0xffffff, 0.6); fillL.position.set(-6,6,12); scene.add(fillL);
+
+const root = new THREE.Group(); scene.add(root);
+
+function onResize(){
+  camera.aspect = innerWidth/innerHeight;
+  renderer.setSize(innerWidth, innerHeight);
+  frameCamera();
+}
+addEventListener("resize", onResize);
+addEventListener("orientationchange", ()=> setTimeout(onResize, 300));
+
+// ---------- config & colours ----------
+let cfg = { op:"allreduce", N:4 };
+let parts = null, step = 0, stepT = 0, playing = false, frames = [];
+let LANG = (navigator.language||"").toLowerCase().startsWith("zh") ? "zh" : "en";
+const GPU_COLS = [0x4ea1ff, 0xf0a44a, 0x57d977, 0xc678dd, 0xe5484d, 0x39c5cf, 0xe0b341, 0xff8fab];
+const PARTIAL_COL = 0xe0a341;   // amber = partially reduced (some but not all origins)
+const SUM_COL     = 0x39c5cf;   // cyan  = fully reduced (all N origins summed)
+const EMPTY_COL   = 0x2a3446;   // dim placeholder for empty slots
+const range = n => [...Array(n).keys()];
+// a cell's colour is decided by how many origins contributed to it
+function cellColor(origins, N){
+  if(!origins || origins.length===0) return EMPTY_COL;
+  if(origins.length===1) return GPU_COLS[origins[0] % GPU_COLS.length];
+  if(origins.length>=N)  return SUM_COL;
+  return PARTIAL_COL;
+}
+
+// ---------- operation state model ----------
+// each frame = { name:{zh,en}, desc:{zh,en}, buf:[g][k]=origins|null, flows:[{from,to,row,origins}] }
+// buf built from a per-cell fn; flows list the packets that fly INTO this frame.
+function frame(N, name, desc, cellFn, flows){
+  const buf = range(N).map(g => range(N).map(k => cellFn(g,k)));
+  return { name, desc, buf, flows: flows||[] };
+}
+const T = (zh,en)=>({zh,en});
+
+function genFrames(op, N){
+  const R = range(N);
+  if(op==="allgather"){
+    return [
+      frame(N, T("初始状态","Initial"), T("每个 GPU 只持有自己的分块（第 g 块）。","Each GPU holds only its own chunk (chunk g)."),
+        (g,k)=> k===g?[g]:null),
+      frame(N, T("AllGather","AllGather"), T("每个 GPU 把自己的分块发给所有其他 GPU；结束后人人持有全部分块。","Each GPU sends its chunk to all others; everyone ends up with every chunk."),
+        (g,k)=>[k],
+        R.flatMap(src=>R.filter(d=>d!==src).map(dst=>({from:src,to:dst,row:src,origins:[src]})))),
+    ];
+  }
+  if(op==="reducescatter"){
+    return [
+      frame(N, T("初始状态","Initial"), T("每个 GPU 都持有全部分块的一份局部值（按本卡着色）。","Each GPU holds a partial for every chunk (coloured by itself)."),
+        (g,k)=>[g]),
+      frame(N, T("ReduceScatter","ReduceScatter"), T("对每个分块求和，结果只落在负责它的那个 GPU 上（第 g 块 → GPU g）。","Sum each chunk, but keep only the slice each GPU owns (chunk g → GPU g)."),
+        (g,k)=> k===g?R.slice():null,
+        R.flatMap(dst=>R.filter(s=>s!==dst).map(src=>({from:src,to:dst,row:dst,origins:[src]})))),
+    ];
+  }
+  if(op==="allreduce"){
+    return [
+      frame(N, T("初始状态","Initial"), T("每个 GPU 持有全部分块的局部值。AllReduce = ReduceScatter + AllGather 两阶段。","Each GPU holds partials for all chunks. AllReduce = ReduceScatter + AllGather."),
+        (g,k)=>[g]),
+      frame(N, T("阶段 1 · ReduceScatter","Phase 1 · ReduceScatter"), T("先做 ReduceScatter：每个分块求和，结果落在各自负责的 GPU 上。","First ReduceScatter: each chunk is summed onto the GPU that owns it."),
+        (g,k)=> k===g?R.slice():null,
+        R.flatMap(dst=>R.filter(s=>s!==dst).map(src=>({from:src,to:dst,row:dst,origins:[src]})))),
+      frame(N, T("阶段 2 · AllGather","Phase 2 · AllGather"), T("再做 AllGather：把已求和的分块广播回所有 GPU，人人得到完整的求和结果。","Then AllGather: broadcast the summed chunks back so every GPU has the full reduced result."),
+        (g,k)=>R.slice(),
+        R.flatMap(src=>R.filter(d=>d!==src).map(dst=>({from:src,to:dst,row:src,origins:R.slice()})))),
+    ];
+  }
+  if(op==="broadcast"){
+    return [
+      frame(N, T("初始状态","Initial"), T("只有根 GPU（GPU 0）持有数据。","Only the root GPU (GPU 0) holds the data."),
+        (g,k)=> g===0?[0]:null),
+      frame(N, T("Broadcast","Broadcast"), T("根 GPU 把数据复制到所有其他 GPU。","The root copies its data to every other GPU."),
+        (g,k)=>[0],
+        R.filter(d=>d!==0).flatMap(dst=>R.map(k=>({from:0,to:dst,row:k,origins:[0]})))),
+    ];
+  }
+  // alltoall
+  return [
+    frame(N, T("初始状态","Initial"), T("每个 GPU 的缓冲区里，第 k 槽是发往 GPU k 的数据（整列同色 = 本卡）。","Each GPU's slot k holds data destined for GPU k (whole column = its own colour)."),
+      (g,k)=>[g]),
+    frame(N, T("All-to-All","All-to-All"), T("转置交换：GPU g 的第 k 槽 ← GPU k 发来的数据。每列从单色变为彩色。","A transpose: GPU g's slot k receives data from GPU k. Each column turns from mono to multi-colour."),
+      (g,k)=>[k],
+      R.flatMap(g=>R.filter(k=>k!==g).map(k=>({from:k,to:g,row:k,origins:[k]})))),
+  ];
+}
+
+// ---------- geometry ----------
+const COLGAP = 2.4, ROWGAP = 1.05, CELL = 0.82;
+const boxGeo = new THREE.BoxGeometry(1,1,1);
+const colX = (g,N) => (g-(N-1)/2)*COLGAP;
+const rowY = (k,N) => ((N-1)/2 - k)*ROWGAP;
+
+function makeLabel(text, color){
+  const c = document.createElement("canvas"), s = 4; c.width = 256*s/2; c.height = 64*s/2;
+  const x = c.getContext("2d"); x.scale(s/2, s/2);
+  x.font = "600 26px -apple-system,Segoe UI,PingFang SC,sans-serif";
+  x.fillStyle = "#" + color.toString(16).padStart(6,"0");
+  x.textAlign = "center"; x.textBaseline = "middle";
+  x.fillText(text, 128, 32);
+  const tex = new THREE.CanvasTexture(c); tex.anisotropy = 4;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({map:tex, transparent:true, depthTest:false}));
+  sp.scale.set(2.6, 0.65, 1);
+  return sp;
+}
+
+function build(){
+  while(root.children.length) root.remove(root.children[0]);
+  const N = cfg.N;
+  frames = genFrames(cfg.op, N);
+  step = 0; stepT = 1; playing = false; animFrom = 0; animDir = 1;
+  const cells = [], mats = [];
+  for(let g=0; g<N; g++){
+    cells[g] = []; mats[g] = [];
+    const x = colX(g,N);
+    for(let k=0; k<N; k++){
+      const m = new THREE.MeshStandardMaterial({color:EMPTY_COL, transparent:true,
+        opacity:0.12, roughness:0.55, metalness:0.05, emissive:0x000000});
+      const cube = new THREE.Mesh(boxGeo, m);
+      cube.scale.set(CELL, CELL, CELL);
+      cube.position.set(x, rowY(k,N), 0);
+      root.add(cube); cells[g][k] = cube; mats[g][k] = m;
+    }
+    // column base plate
+    const base = new THREE.Mesh(boxGeo, new THREE.MeshStandardMaterial({color:0x1c2330,
+      transparent:true, opacity:0.6, roughness:0.8}));
+    base.scale.set(CELL*1.5, 0.12, CELL*1.5);
+    base.position.set(x, rowY(N-1,N) - ROWGAP*0.75, 0);
+    root.add(base);
+    // GPU label above the column, tinted by that GPU's colour
+    const lab = makeLabel("GPU "+g, GPU_COLS[g % GPU_COLS.length]);
+    lab.position.set(x, rowY(0,N) + ROWGAP*0.9, 0);
+    root.add(lab);
+  }
+  parts = { cells, mats, packets:[], N };
+  rebuildPackets();
+  applyCells(1);                       // settle to frame 0 instantly
+  BOUND = Math.max(6, Math.hypot((N-1)*COLGAP, (N-1)*ROWGAP)*0.62 + 2.5);
+  frameCamera();
+  renderHUD();
+}
+
+// ---------- animation ----------
+const DUR = 1.1;                        // seconds per step transition
+const smooth = t => t*t*(3-2*t);
+// animation runs between animFrom (source) and step (target); dir=+1 forward, -1 reverse.
+// the transition's packets belong to the HIGHER frame index (flows that create it).
+let animFrom = 0, animDir = 1;
+const srcFrame = () => frames[animFrom];
+const tgtFrame = () => frames[step];
+const transFrame = () => frames[Math.max(animFrom, step)];
+
+// (re)create one packet cube per flow of the current transition
+function rebuildPackets(){
+  parts.packets.forEach(p => root.remove(p.mesh));
+  parts.packets = [];
+  const N = parts.N, flows = transFrame().flows;
+  flows.forEach((f,i)=>{
+    const m = new THREE.MeshStandardMaterial({color:cellColor(f.origins,N),
+      transparent:true, opacity:0, emissive:cellColor(f.origins,N), emissiveIntensity:0.35});
+    const cube = new THREE.Mesh(boxGeo, m); cube.scale.set(CELL*0.6, CELL*0.6, CELL*0.6);
+    root.add(cube);
+    parts.packets.push({mesh:cube, mat:m, f, stagger:(i%5)*0.05});
+  });
+}
+
+const clamp01 = x => Math.max(0, Math.min(1, x));
+// set every cell's colour/opacity for eased progress e (0=source frame, 1=target frame).
+// arriving cells stay dark until the packet reaches them (second half); leaving cells fade early.
+function applyCells(e){
+  const N = parts.N, tb = tgtFrame().buf, sb = srcFrame().buf;
+  for(let g=0; g<N; g++) for(let k=0; k<N; k++){
+    const t = tb[g][k], s = sb[g][k], tf = !!t, sf = !!s, m = parts.mats[g][k];
+    let op, col;
+    if(tf && !sf){                                   // arriving: light up as packet lands
+      const a = smooth(clamp01((e-0.5)/0.5));
+      op = 0.12 + 0.88*a; col = a>0 ? cellColor(t,N) : EMPTY_COL;
+    } else if(!tf && sf){                            // leaving: fade out as packet departs
+      const a = smooth(clamp01(e/0.5));
+      op = 1 - 0.88*a; col = cellColor(s,N);
+    } else if(tf && sf){                             // recolour (e.g. partial→sum)
+      op = 1; col = e<0.5 ? cellColor(s,N) : cellColor(t,N);
+    } else { op = 0.12; col = EMPTY_COL; }
+    m.opacity = op; m.color.setHex(col);
+    m.emissive.setHex(op>0.15 ? col : 0x000000); m.emissiveIntensity = op>0.15 ? 0.18*op : 0;
+  }
+}
+
+// fly packets between columns; reverse direction when animating backward.
+function applyPackets(e){
+  const N = parts.N, fwd = animDir >= 0;
+  parts.packets.forEach(p=>{
+    const {f, stagger} = p;
+    const le = clamp01((e-stagger)/(1-stagger||1));
+    const a = colX(f.from,N), b = colX(f.to,N);
+    const x0 = fwd ? a : b, x1 = fwd ? b : a, y = rowY(f.row,N);
+    p.mesh.position.set(x0 + (x1-x0)*le, y, Math.sin(le*Math.PI)*0.6);
+    p.mat.opacity = (e>=1||e<=0) ? 0 : Math.sin(le*Math.PI)*0.95;
+  });
+}
+
+function updateScene(dt){
+  if(playing && stepT>=1){
+    if(step < frames.length-1) gotoStep(step+1, true);
+    else playing = false;
+  }
+  if(stepT < 1) stepT = Math.min(1, stepT + dt/DUR);
+  const e = smooth(stepT);
+  applyCells(e); applyPackets(e);
+  if($("btnPlay")) $("btnPlay").textContent = playing ? UI[LANG].pause : UI[LANG].play;
+}
+
+function gotoStep(s, animate){
+  const from = step;
+  step = ((s % frames.length) + frames.length) % frames.length;
+  animFrom = animate ? from : step;                  // no-anim → source==target (instant settle)
+  animDir  = step >= animFrom ? 1 : -1;
+  rebuildPackets();
+  stepT = animate ? 0 : 1;
+  renderHUD();
+}
+function next(){ if(step < frames.length-1) gotoStep(step+1, true); else { playing=false; } }
+function prev(){ if(step > 0) gotoStep(step-1, true); }   // animate in reverse
+
+// ---------- HUD & i18n ----------
+const OP_TITLE = {
+  allreduce:     T("AllReduce — 全归约", "AllReduce"),
+  allgather:     T("AllGather — 全收集", "AllGather"),
+  reducescatter: T("ReduceScatter — 归约散射", "ReduceScatter"),
+  broadcast:     T("Broadcast — 广播", "Broadcast"),
+  alltoall:      T("All-to-All — 全交换", "All-to-All"),
+};
+const UI = {
+  zh:{prev:"上一步",next:"下一步",play:"播放",pause:"暂停",op:"操作",n:"GPU数",home:"首页",
+      single:"单卡数据",partial:"部分求和",sum:"完整求和",row:"行=数据块 / 列=GPU"},
+  en:{prev:"Prev",next:"Next",play:"Play",pause:"Pause",op:"Op",n:"GPUs",home:"Home",
+      single:"single-GPU data",partial:"partial sum",sum:"full sum",row:"row=chunk / col=GPU"},
+};
+const hex6 = n => "#"+n.toString(16).padStart(6,"0");
+
+function renderLegend(u){
+  const el = $("legend"); if(!el) return;
+  const N = cfg.N, items = [];
+  for(let g=0; g<N; g++) items.push([hex6(GPU_COLS[g%GPU_COLS.length]), "GPU "+g]);
+  // reduce-type ops also use partial/sum colours
+  if(cfg.op==="allreduce" || cfg.op==="reducescatter"){
+    items.push([hex6(PARTIAL_COL), u.partial], [hex6(SUM_COL), u.sum]);
+  }
+  el.innerHTML = items.map(([c,t])=>
+    '<span><i style="background:'+c+'"></i>'+t+'</span>').join("")
+    + '<span style="width:100%;color:var(--muted);opacity:.75">'+u.row+'</span>';
+}
+
+function renderHUD(){
+  const u = UI[LANG];
+  $("title").textContent = OP_TITLE[cfg.op][LANG];
+  const fr = frames[step];
+  $("stepName").textContent = (step+1)+"/"+frames.length+" · "+fr.name[LANG];
+  $("stepDesc").textContent = fr.desc[LANG];
+  renderLegend(u);
+  $("tPrev").textContent = u.prev; $("tNext").textContent = u.next;
+  $("btnPlay").textContent = playing ? u.pause : u.play;
+  $("tOp").textContent = u.op; $("tN").textContent = u.n; $("tHome").textContent = u.home;
+  $("btnLang").textContent = LANG==="zh" ? "EN" : "中文";
+  document.documentElement.lang = LANG;
+}
+
+function syncParams(){
+  cfg.op = $("selOp").value;
+  cfg.N = parseInt($("selN").value, 10);
+  build();
+}
+
+// ---------- wiring ----------
+$("btnNext").onclick = next;
+$("btnPrev").onclick = prev;
+$("btnPlay").onclick = ()=>{
+  if(step >= frames.length-1 && stepT>=1){ gotoStep(0, false); } // replay from start
+  playing = !playing;
+  if(playing && stepT>=1 && step<frames.length-1) gotoStep(step+1, true);
+  renderHUD();
+};
+$("btnLang").onclick = ()=>{ LANG = LANG==="zh"?"en":"zh"; renderHUD(); };
+$("selOp").onchange = syncParams;
+$("selN").onchange = syncParams;
+canvas.addEventListener("dblclick", ()=>{ viewInit=false; frameCamera(); });
+
+// ---------- boot ----------
+let clock = new THREE.Clock();
+function animate(){
+  requestAnimationFrame(animate);
+  const dt = clock.getDelta();
+  controls.update();
+  if(parts) updateScene(dt);
+  renderer.render(scene, camera);
+}
+onResize();
+build();
+animate();
+</script>
+</body>
+</html>
