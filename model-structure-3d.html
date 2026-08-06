@@ -1,0 +1,1631 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; base-uri 'self'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>InferFlux · MiMo-V2.5 Model Structure 3D</title>
+<style>
+:root{ --bg:#0d1117; --panel:#161b22cc; --border:#2d3646; --text:#e6edf3;
+  --muted:#8b98a9; --accent:#4ea1ff; --cyan:#39c5cf; }
+*{box-sizing:border-box; margin:0; padding:0;}
+html,body{height:100%;}
+body{background:var(--bg); color:var(--text); overflow:hidden;
+  font-family:-apple-system,"SF Pro","Segoe UI",Roboto,"PingFang SC",sans-serif;}
+#gl{display:block; width:100vw; height:100vh; cursor:grab; touch-action:none;}
+#gl:active{cursor:grabbing;}
+.hud{position:fixed; top:16px; left:16px; max-width:360px; pointer-events:none;}
+.hud .home{display:inline-block; pointer-events:auto; color:var(--muted); font-size:12px;
+  text-decoration:none; margin-bottom:6px;}
+.hud .home:hover{color:var(--accent);}
+.hud .modelbar{display:flex; align-items:center; gap:8px; margin-bottom:8px; pointer-events:auto;}
+.hud .modelbar label{color:var(--muted); font-size:11px;}
+#selModel{background:#1c2330; border:1px solid var(--border); color:var(--text);
+  border-radius:7px; padding:5px 9px; font-size:13px; font-weight:600; cursor:pointer;}
+#selModel:hover{border-color:var(--accent);}
+.soon{position:fixed; inset:0; display:none; align-items:center; justify-content:center;
+  pointer-events:none; z-index:5;}
+.soon .box{background:var(--panel); backdrop-filter:blur(8px); border:1px solid var(--border);
+  border-radius:14px; padding:28px 36px; text-align:center; max-width:420px;}
+.soon .box h2{font-size:20px; margin-bottom:10px;}
+.soon .box p{color:var(--muted); font-size:13px; line-height:1.7;}
+.hud h1{font-size:15px; font-weight:700; margin-bottom:6px;}
+.hud .step{color:var(--accent); font-weight:600; font-size:13px;}
+.hud .desc{color:var(--muted); font-size:12px; line-height:1.6; margin-top:4px; white-space:pre-line;}
+.hud .hint{color:var(--muted); font-size:11px; opacity:.7; margin-top:8px;}
+.legend{display:flex; flex-wrap:wrap; gap:8px 12px; margin-top:10px; font-size:11px; color:var(--muted);}
+.legend i{display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:middle;}
+.panel{position:fixed; bottom:16px; left:50%; transform:translateX(-50%);
+  background:var(--panel); backdrop-filter:blur(8px); border:1px solid var(--border);
+  border-radius:12px; padding:12px 16px; display:flex; align-items:center; gap:12px;
+  font-size:12px; flex-wrap:wrap; justify-content:center; max-width:calc(100vw - 24px);}
+.panel button{background:#1c2330; border:1px solid var(--border); color:var(--text);
+  border-radius:7px; padding:6px 12px; cursor:pointer; font-size:12px;}
+.panel button:hover{border-color:var(--accent);}
+.panel button.primary{background:var(--accent); border-color:var(--accent); color:#08111e; font-weight:600;}
+.panel .grp{display:flex; align-items:center; gap:6px; color:var(--muted);}
+.panel select{background:#1c2330; border:1px solid var(--border); color:var(--text);
+  border-radius:6px; padding:4px 6px; font-size:12px;}
+.badge{position:fixed; bottom:16px; right:16px; color:var(--muted); font-size:11px;}
+#btnLang{position:fixed; top:16px; right:16px; background:#1c2330; border:1px solid var(--border);
+  color:var(--text); border-radius:6px; padding:4px 10px; cursor:pointer; font-size:12px;}
+@media (max-width:640px){
+  .hud{max-width:none; right:16px; top:12px; left:12px;}
+  .hud h1{font-size:14px;}
+  .hud .desc{font-size:11px;}
+  .badge{display:none;}
+  .panel{left:8px; right:8px; transform:none; bottom:10px; gap:8px 10px;
+    flex-wrap:wrap; justify-content:center; padding:10px 12px;}
+  .panel button{padding:8px 12px; font-size:13px;}
+  .panel select{padding:6px 8px; font-size:13px;}
+}
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div class="hud">
+  <a class="home" href="index.html">← <span id="tHome"></span></a>
+  <div class="modelbar"><label id="tModel"></label><select id="selModel"></select></div>
+  <h1 id="title"></h1>
+  <div class="step" id="stepName"></div>
+  <div class="desc" id="stepDesc"></div>
+  <div class="legend" id="legend"></div>
+  <div class="hint" id="hint"></div>
+</div>
+<button id="btnLang">EN</button>
+<div class="panel">
+  <button class="primary" id="btnReset"></button>
+  <span class="grp"><span id="tJump"></span>
+    <select id="selRegion"></select></span>
+  <span class="grp"><span id="tTP"></span>
+    <select id="selTP"><option>1</option><option>2</option><option selected>4</option><option>8</option></select></span>
+  <span class="grp"><span id="tDP"></span>
+    <select id="selDP"><option>1</option><option selected>2</option><option>4</option></select></span>
+  <span class="grp"><span id="tEP"></span>
+    <select id="selEP"><option>1</option><option>2</option><option>4</option><option selected>8</option></select></span>
+  <span class="grp"><label style="display:flex;align-items:center;gap:5px;cursor:pointer;color:var(--muted)">
+    <input type="checkbox" id="chkDPAttn" checked><span id="tDPAttn"></span></label></span>
+</div>
+<div class="soon" id="soon"><div class="box">
+  <h2 id="soonTitle"></h2><p id="soonBody"></p>
+</div></div>
+<div class="badge">Three.js r0.185 · pure static</div>
+<script>
+// visible error overlay — shows load/runtime errors on screen instead of blank
+window.addEventListener("error", function(e){
+  var msg = e.message || (e.error && e.error.message) || String(e);
+  if(e.filename) msg += "  @ " + e.filename.split("/").pop() + ":" + e.lineno;
+  var d = document.createElement("div");
+  d.style.cssText = "position:fixed;left:8px;right:8px;bottom:80px;z-index:99;"+
+    "background:#2a1518;border:1px solid #f0a44a;border-radius:8px;padding:10px 12px;"+
+    "color:#f0a44a;font-size:12px;line-height:1.6;font-family:monospace;white-space:pre-wrap;";
+  d.textContent = "⚠ " + msg;
+  document.body.appendChild(d);
+});
+</script>
+<script type="module">
+import * as THREE from './vendor/three.module.js';
+import { OrbitControls } from './vendor/jsm/controls/OrbitControls.js';
+
+/* ============================================================
+   MiMo-V2.5 (310B omni-modal MoE) — ONE big, fully-expanded model
+   structure. Everything is placed at once; you orbit / zoom / click.
+   Faithful to real SGLang source, verified 2026-08-03:
+     python/sglang/srt/models/mimo_v2.py         (LM backbone)
+     python/sglang/srt/models/mimo_v2_nextn.py   (MTP / nextn head)
+     python/sglang/srt/models/mimo_vl.py         (ViT encoder)
+     python/sglang/srt/models/mimo_audio.py      (audio encoder)
+   and the checkpoint config.json (XiaomiMiMo/MiMo-V2.5).
+   ------------------------------------------------------------
+   Ground-truth config used below:
+     hidden=4096, layers=48, vocab=152576, tie_word_embeddings=false
+     hybrid_layer_pattern (0=global attn, 1=SWA): globals at
+       0,5,11,17,23,29,35,41,47  (9 global + 39 SWA)
+       global: 64 Q / 4 KV, head_dim 192, v_head_dim 128, no sink
+       SWA:    64 Q / 8 KV, head_dim 192, v_head_dim 128,
+               sliding_window 128, attention-sink bias, swa_rope_theta 1e4
+       partial_rotary_factor 0.334 -> RoPE on 64 of 192 dims
+       attention_value_scale 0.707 (v *= 0.707)
+     moe_layer_freq: layer 0 = Dense (intermediate 16384),
+       layers 1..47 = MoE (256 experts, top-8, moe_intermediate 2048,
+       n_group 1, sigmoid + noaux_tc bias, norm_topk_prob, NO shared expert)
+     MTP (nextn): 1 physical block, EAGLE recursive multi-step
+     ViT: 28 blocks (full-attn at 0,9,18,27; else window=64), hidden 1280,
+       GQA 32 Q / 8 KV head_dim 64, merger 2x2 -> 4096
+     Audio: mel->tokenizer(conv+8L+RVQ)->codes; 20 ch-embeds summed,
+       group_size 4; input_local_transformer (Qwen2, 6L, 1024, 16h MHA,
+       rope 640000, full-attn); projection -> 4096
+   ============================================================ */
+
+const $ = id => document.getElementById(id);
+const hex6 = n => "#" + n.toString(16).padStart(6, "0");
+const T = (zh, en) => ({ zh, en });
+
+// ---------- model registry ----------
+// Add future models here. `ready:true` renders its 3D structure (only MiMo-V2.5 for now);
+// `ready:false` shows a "coming soon" overlay instead of a scene, until its real config
+// (from the checkpoint config.json on ModelScope) is wired into a builder.
+const MODELS = [
+  { id:"mimo-v2.5", ready:true,
+    name:T("MiMo-V2.5","MiMo-V2.5"),
+    title:T("MiMo-V2.5 · 模型结构 3D","MiMo-V2.5 · Model Structure 3D") },
+  { id:"kimi3", ready:false,
+    name:T("Kimi3","Kimi3"),
+    title:T("Kimi3 · 模型结构 3D","Kimi3 · Model Structure 3D"),
+    soon:T("Kimi3 结构建设中，敬请期待","Kimi3 structure — coming soon") },
+];
+const getModel = id => MODELS.find(m=>m.id===id) || MODELS[0];
+let curModel = "mimo-v2.5";
+
+// ---------- config arrays (verbatim from config.json) ----------
+const PATTERN = [0,1,1,1,1,0,1,1,1,1,1,0,1,1,1,1,1,0,1,1,1,1,1,0,1,1,1,1,1,0,1,1,1,1,1,0,1,1,1,1,1,0,1,1,1,1,1,0];
+const N_LAYERS = 48;
+const isMoE = i => i !== 0;               // moe_layer_freq: only layer 0 is dense
+const isGlobal = i => PATTERN[i] === 0;   // 0 = global attention, 1 = SWA
+const GLOBALS = PATTERN.map((v,i)=>v===0?i:-1).filter(i=>i>=0); // [0,5,11,17,23,29,35,41,47]
+const VIT_LAYERS = 28, VIT_FULL = [0,9,18,27];
+
+// ---------- colours ----------
+const C = {
+  global: 0x4ea1ff, swa: 0xf0a44a, dense: 0x9aa7b8, moe: 0x57d977,
+  vit: 0x39c5cf, vitFull: 0x7ee0e6, audio: 0xc678dd, mtp: 0xe5484d,
+  io: 0xe0b341, norm: 0x6b7a8f, cyan: 0x39c5cf, dim: 0x2a3446,
+  qh: 0x7fb2ff, kh: 0xf0a44a, vh: 0x57d977, ctx: 0xb3a9ee, wo: 0x7fd4dd,
+  inter: 0x57d977, comm: 0x39c5cf, rs: 0xe0b341, res: 0x6b7a8f, rope: 0xf0a44a,
+};
+// per-GPU rank colours (attention head TP split + expert EP owner) + KV-replica grey
+const GPU_COLS = [0x4ea1ff,0xf0a44a,0x57d977,0xc678dd,0xe5484d,0x39c5cf,0xe0b341,0xff8fab];
+const REPLICATE_COL = 0x8b98a9;
+const rankColor = r => GPU_COLS[r % GPU_COLS.length];
+
+// ---------- deployment config (single-node 8-GPU: --tp 8 --dp 2 --ep 8 --enable-dp-attention) ----
+// tp here = attention-TP within each DP group; world = tp*dp (=8). ep = expert-parallel degree.
+let cfg = { tp:4, dp:2, ep:8, dpAttn:true };
+const NE_TOTAL = 256, TOPK = 8;   // 256 routed experts, top-8 per token (config.json)
+const SEQ = 3;                    // illustrative token-block height
+const worldSize = () => cfg.tp * cfg.dp;
+
+// ---------- three.js scene ----------
+const canvas = $("gl");
+let renderer;
+try { renderer = new THREE.WebGLRenderer({ canvas, antialias:true }); }
+catch(e){
+  document.body.insertAdjacentHTML("beforeend",
+    "<div style='position:fixed;inset:0;display:flex;align-items:center;justify-content:center;"+
+    "padding:24px;text-align:center;color:#f0a44a;font-size:14px;line-height:1.7'>"+
+    "WebGL 初始化失败 / WebGL init failed<br>"+String(e)+"</div>");
+  throw e;
+}
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x141b26);
+const FOV = 50;
+const camera = new THREE.PerspectiveCamera(FOV, innerWidth/innerHeight, 0.1, 5000);
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true; controls.dampingFactor = 0.08;
+controls.addEventListener("change", ()=>{ if(typeof markLodDirty==="function") markLodDirty(); });
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.95));
+scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x1a2233, 0.7));
+const keyL = new THREE.DirectionalLight(0xffffff, 1.35); keyL.position.set(20,34,26); scene.add(keyL);
+const fillL = new THREE.DirectionalLight(0xffffff, 0.55); fillL.position.set(-20,16,30); scene.add(fillL);
+
+const root = new THREE.Group(); scene.add(root);
+const conns = new THREE.Group(); root.add(conns);   // connector arrows layer
+
+// ---------- corner orientation gizmo (top-right) ----------
+// Own tiny scene + ortho camera, drawn in a scissored viewport with the SAME renderer
+// (no 2nd WebGL context → CSP-safe). Orientation mirrors the main camera each frame.
+const GIZMO_PX = 96;
+const gizmoScene = new THREE.Scene();
+const gizmoCam = new THREE.OrthographicCamera(-1.6,1.6,1.6,-1.6,0.1,10);
+gizmoCam.position.set(0,0,4);
+const gizmoRoot = new THREE.Group(); gizmoScene.add(gizmoRoot);
+function gizmoAxis(dir, color, letter){
+  const g = new THREE.Group();
+  const v = dir.clone().normalize();
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.055,0.055,1.0,10), new THREE.MeshBasicMaterial({color}));
+  shaft.position.copy(v).multiplyScalar(0.5);
+  shaft.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), v);
+  g.add(shaft);
+  const tip = new THREE.Mesh(new THREE.ConeGeometry(0.14,0.28,12), new THREE.MeshBasicMaterial({color}));
+  tip.position.copy(v).multiplyScalar(1.08);
+  tip.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), v);
+  g.add(tip);
+  if(letter){ const s=gizmoLetter(letter,color); s.position.copy(v).multiplyScalar(1.5); g.add(s); }
+  return g;
+}
+function gizmoLetter(ch, color){
+  const cv=document.createElement("canvas"); cv.width=cv.height=64;
+  const x=cv.getContext("2d"); x.fillStyle="#"+color.toString(16).padStart(6,"0");
+  x.font="bold 46px -apple-system,Segoe UI,sans-serif"; x.textAlign="center"; x.textBaseline="middle";
+  x.fillText(ch,32,34);
+  const tx=new THREE.CanvasTexture(cv); tx.anisotropy=4;
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:tx,transparent:true,depthTest:false}));
+  sp.scale.set(0.6,0.6,0.6); return sp;
+}
+gizmoRoot.add(gizmoAxis(new THREE.Vector3(1,0,0), 0xe5484d, "X"));   // X red   (data-flow axis)
+gizmoRoot.add(gizmoAxis(new THREE.Vector3(0,1,0), 0xf5c518, "Y"));   // Y yellow (rows / seq up)
+gizmoRoot.add(gizmoAxis(new THREE.Vector3(0,0,1), 0x4ea1ff, "Z"));   // Z blue  (head / lane fan)
+gizmoRoot.add(gizmoAxis(new THREE.Vector3(-1,0,0), 0x7a2f34, null));
+gizmoRoot.add(gizmoAxis(new THREE.Vector3(0,-1,0), 0x7a6410, null));
+gizmoRoot.add(gizmoAxis(new THREE.Vector3(0,0,-1), 0x2f5f9e, null));
+gizmoRoot.add(new THREE.Mesh(new THREE.SphereGeometry(0.12,16,16), new THREE.MeshBasicMaterial({color:0xc4d0de})));
+function renderGizmo(){
+  gizmoRoot.quaternion.copy(camera.quaternion).invert();
+  const s = GIZMO_PX, pad = 12, topClear = 52;   // topClear drops it below the EN/中文 button
+  const x = innerWidth - s - pad;
+  const y = innerHeight - s - pad - topClear;     // GL origin = bottom-left → top-right corner
+  renderer.setViewport(x,y,s,s); renderer.setScissor(x,y,s,s);
+  renderer.setScissorTest(true);
+  renderer.autoClear = false;
+  renderer.clearDepth();
+  renderer.render(gizmoScene, gizmoCam);
+  renderer.autoClear = true;
+  renderer.setScissorTest(false);
+  renderer.setViewport(0,0,innerWidth,innerHeight);
+}
+
+let LANG = (navigator.language||"").toLowerCase().startsWith("zh") ? "zh" : "en";
+
+// ---------- geometry helpers ----------
+const boxGeo = new THREE.BoxGeometry(1,1,1);
+function mat(color, opacity){
+  // near-solid blocks (>=0.95) render OPAQUE so they depth-write and don't z-fight/flicker;
+  // only genuinely translucent blocks (dim experts 0.5, weight sheets 0.9) stay transparent.
+  const opaque = (opacity==null || opacity>=0.95);
+  return new THREE.MeshStandardMaterial({ color, transparent:!opaque, opacity:opaque?1:opacity,
+    roughness:0.55, metalness:0.08, emissive:color, emissiveIntensity:0.14 });
+}
+function box(w,h,d, color, opacity){
+  const m = mat(color, opacity);
+  const mesh = new THREE.Mesh(boxGeo, m);
+  mesh.scale.set(w,h,d);
+  mesh._mat = m; mesh._baseEmissive = 0.14;
+  return mesh;
+}
+function label(text, color=0xe6edf3, H=0.42){
+  H *= 2.6;                 // global label upscale (fixed-orientation planes) — 2× the previous 1.3
+  const px = 40, pad = 10;  // higher canvas res so upscaled text stays crisp
+  const meas = document.createElement("canvas").getContext("2d");
+  const font = "600 "+px+"px -apple-system,Segoe UI,PingFang SC,sans-serif";
+  meas.font = font;
+  const w = Math.ceil(meas.measureText(text).width) + pad*2, h = px + pad*2;
+  const s = 2, cv = document.createElement("canvas"); cv.width = w*s; cv.height = h*s;
+  const c = cv.getContext("2d"); c.scale(s,s); c.font = font;
+  c.fillStyle = hex6(color); c.textAlign = "center"; c.textBaseline = "middle";
+  c.fillText(text, w/2, h/2);
+  const tex = new THREE.CanvasTexture(cv); tex.anisotropy = 4;
+  // Fixed-orientation label plane (no longer a camera-facing sprite): front face points -x.
+  // Default PlaneGeometry normal = +z, text width along +x. Rotating -90° about Y makes the
+  // normal point -x, text width run along +z, up stays +y → reads left→right, upright, from -x.
+  const pg = new THREE.PlaneGeometry((w/h)*H, H);
+  const sp = new THREE.Mesh(pg, new THREE.MeshBasicMaterial({
+    map:tex, transparent:true, depthTest:false, depthWrite:false, side:THREE.DoubleSide, toneMapped:false }));
+  sp.rotation.y = -Math.PI/2;
+  sp.renderOrder = 999;        // draw on top, like the old depthTest:false sprites
+  sp._isLabel = true;
+  return sp;
+}
+function arrow(from, to, color=0x5a6b80, op=0.75){
+  const dir = new THREE.Vector3().subVectors(to, from);
+  const len = dir.length(); if(len < 1e-4) return new THREE.Group();
+  dir.normalize();
+  const a = new THREE.ArrowHelper(dir, from, len, color, Math.min(0.5, len*0.28), 0.24);
+  a.line.material.transparent = true; a.line.material.opacity = op;
+  return a;
+}
+function pos(obj, x, y, z){ obj.position.set(x,y,z); return obj; }
+function V(x,y,z){ return new THREE.Vector3(x,y,z); }
+
+// ---------- expanded-geometry helpers (match transformer-3d.html shape/orientation) ----------
+// makeHead: a token/activation SHEET = cube grid, rows stacked up Y, cols along Z (axis='z',
+// the "wide matrix" look) or along X (axis='x', compact). Thin along the X flow axis.
+// (mirrors transformer-3d makeHead: cell 1.0 row pitch, 0.62 col pitch, scale ~0.6×0.92×0.55.)
+function makeHead(color, rows, w, cols, gi, axis){
+  const g = new THREE.Group();
+  const nc = cols||1;
+  const cw = nc>1 ? 0.55 : (w||0.9);   // narrower cells when it's a real grid
+  const gap = nc>1 ? 0.62 : 1.0;
+  const alongZ = axis!=="x";           // default z (wide matrices)
+  for(let r=0;r<rows;r++) for(let c=0;c<nc;c++){
+    const cell = box(alongZ?0.6:cw, 0.92, alongZ?cw:0.6, color, 0.96);
+    const off = (c-(nc-1)/2)*gap;
+    cell.position.set(alongZ?0:off, (r-(rows-1)/2)*1.0, alongZ?off:0);
+    if(gi!=null) cell.userData.gi = gi;
+    g.add(cell);
+  }
+  g._mat = g.children[0] && g.children[0]._mat;
+  return g;
+}
+// makeMatrix('stand'): a standing weight matrix = cube grid in the YZ plane — rows up Y, cols
+// along Z, thin along the X flow axis (mirrors transformer-3d makeMatrix stand: 0.44³ cubes,
+// 0.62 pitch). blockCols inserts head-block gaps; divs draws GPU-partition lines pushed to +X.
+// When `divs={axis:'col'|'row', n}` the matrix is TP-sharded: each shard is COLOURED by its GPU rank
+// (rankColor, same palette as the head fans) and separated by a real GAP, so the TP split is obvious —
+// not just a thin divider line. axis 'col' = column-parallel (split along Z), 'row' = row-parallel (split along Y).
+const MAT_SP = 0.62, TGAP_COL = 1.0, TGAP_ROW = 0.6;  // cube pitch; TP-shard gaps (row gap smaller: Y is the tight, label-bearing axis)
+// half-height of a standing matrix in Y, accounting for a row-parallel TP split (splitN shards).
+// used by callers to place labels JUST outside the matrix silhouette (labels draw depthTest-off / on top).
+function matHalfY(rows, splitN){ return ((rows-1)*MAT_SP + ((splitN||1)-1)*TGAP_ROW)/2; }
+function makeMatrix(rows, cols, color, gi, blockCols, divs){
+  const g = new THREE.Group();
+  const sp = MAT_SP, bc = blockCols||0, bgap = 0.5;
+  const n = (divs && divs.n>1) ? divs.n : 1;
+  const tgap = (divs && divs.axis==="row") ? TGAP_ROW : TGAP_COL;   // row-split uses the smaller gap
+  const splitCol = n>1 && divs.axis==="col", splitRow = n>1 && divs.axis==="row";
+  const colBand = j => splitCol ? Math.min(n-1, Math.floor(j*n/cols)) : 0;
+  const rowBand = i => splitRow ? Math.min(n-1, Math.floor(i*n/rows)) : 0;
+  const colZ = j => j*sp + (bc? Math.floor(j/bc)*bgap : 0) + colBand(j)*tgap;
+  const rowY = i => i*sp + rowBand(i)*tgap;
+  const midZ = colZ(cols-1)/2, midY = rowY(rows-1)/2;
+  for(let i=0;i<rows;i++) for(let j=0;j<cols;j++){
+    const band = splitCol ? colBand(j) : (splitRow ? rowBand(i) : -1);
+    const c = box(0.44,0.44,0.44, band>=0 ? rankColor(band) : color, 0.96);
+    c.position.set(0, rowY(i)-midY, colZ(j)-midZ);
+    if(gi!=null) c.userData.gi = gi;
+    g.add(c);
+  }
+  g._mat = g.children[0] && g.children[0]._mat;
+  // faint divider lines in the gaps (pushed to +X so they float in front of the cube sheet)
+  if(n>1){
+    const xf = 0.35, yHalf = midY + 0.4, zHalf = midZ + 0.4;
+    for(let k=1;k<n;k++){
+      if(splitCol){ const z = (colZ(Math.round(k*cols/n)-1)+colZ(Math.round(k*cols/n)))/2 - midZ;
+        g.add(line(V(xf,-yHalf,z), V(xf,yHalf,z), 0xeaf0f8, 0.85)); }
+      else { const y = (rowY(Math.round(k*rows/n)-1)+rowY(Math.round(k*rows/n)))/2 - midY;
+        g.add(line(V(xf,y,-zHalf), V(xf,y,zHalf), 0xeaf0f8, 0.85)); }
+    }
+  }
+  return g;
+}
+function cube(color, gi){ const c = box(1,1,1,color,0.96); if(gi!=null) c.userData.gi=gi; return c; }
+function line(a, b, color=0x8b98a9, op=0.6){
+  const geo = new THREE.BufferGeometry().setFromPoints([a,b]);
+  const m = new THREE.LineBasicMaterial({ color, transparent:true, opacity:op });
+  return new THREE.Line(geo, m);
+}
+function arc(a, b, color, op, dip=-2){
+  const mid = V((a.x+b.x)/2, (a.y+b.y)/2 + dip, (a.z+b.z)/2);
+  const cv = new THREE.QuadraticBezierCurve3(a, mid, b);
+  const geo = new THREE.BufferGeometry().setFromPoints(cv.getPoints(20));
+  return new THREE.Line(geo, new THREE.LineBasicMaterial({ color, transparent:true, opacity:op==null?0.6:op }));
+}
+function makeRope(){
+  const g = new THREE.Group();
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.07, 8, 20),
+    new THREE.MeshStandardMaterial({ color:C.rope, emissive:C.rope, emissiveIntensity:0.4 }));
+  g.add(ring); return g;
+}
+
+// ============================================================
+//  detail specs (faithful text; geometry is built by the expanded pipelines/floors)
+// ============================================================
+
+// ---------- faithful node specs ----------
+function attnNodes(type){
+  const g = type==="global";
+  return [
+    { t:"input_layernorm", s:"RMSNorm", role:"norm" },
+    { t:"qkv_proj (fused)", s:g?"→ 12288/768/512":"→ 12288/1536/1024", role:"proj" },
+    { t:"split Q·K·V", s:g?"Q 64×192 · KV 4×192/v128":"Q 64×192 · KV 8×192/v128", role:"split", deco:"gqa", hq:64, hkv:g?4:8 },
+    { t:"RoPE (partial)", s:"rotate 64 of 192 dims", role:"rope" },
+    { t:"v · 0.707", s:"attention_value_scale", role:"scale" },
+    { t: g?"attn (global)":"attn (SWA 128)", s: g?"RadixAttention · no sink":"RadixAttention + sink", role: g?"attn":"sink" },
+    { t:"o_proj", s:"64×128 = 8192 → 4096", role:"proj" },
+    { t:"+ residual", s:"", role:"res" },
+  ];
+}
+function mlpNodes(type){
+  if(type==="dense") return [
+    { t:"post_attention_ln", s:"RMSNorm", role:"norm" },
+    { t:"gate_up_proj", s:"4096 → [16384,16384]", role:"proj" },
+    { t:"SiluAndMul", s:"silu(gate)·up", role:"mlp" },
+    { t:"down_proj", s:"16384 → 4096", role:"proj" },
+    { t:"+ residual", s:"", role:"res" },
+  ];
+  return [
+    { t:"post_attention_ln", s:"RMSNorm", role:"norm" },
+    { t:"gate (router)", s:"4096→256 · sigmoid", role:"gate" },
+    { t:"TopK", s:"top-8 · noaux_tc · renorm", role:"topk" },
+    { t:"experts", s:"each 4096→2048→4096 SwiGLU", role:"experts", deco:"experts", total:256, topk:8 },
+    { t:"weighted Σ", s:"(+ all-reduce if TP)", role:"mlp" },
+    { t:"+ residual", s:"", role:"res" },
+  ];
+}
+function lmInfo(foc){
+  const g = foc.attnType==="global";
+  const name = foc.i===0 ? T("第 0 层 · 全局注意力 + Dense MLP","Layer 0 · Global attention + Dense MLP")
+    : (g ? T("全局注意力层 + MoE","Global-attention layer + MoE")
+         : T("滑窗注意力层 (SWA) + MoE","Sliding-window (SWA) layer + MoE"));
+  const desc = {
+    zh: "Decoder Layer "+foc.i+" / 48。\n"
+      + "注意力: "+(g?"全局 GQA 64Q/4KV":"SWA GQA 64Q/8KV, 窗口 128")+", head_dim 192 / v 128 (非对称), "
+      + (g?"无 attention sink。":"带 attention sink bias。")+"\n"
+      + "qkv_proj 融合后 split;仅前 64/192 维走 RoPE (partial_rotary_factor 0.334);V 先乘 0.707。\n"
+      + "MLP: "+(isMoE(foc.i)?"MoE — 256 专家 top-8, sigmoid 打分 + noaux_tc 校正偏置, 无共享专家 (moe_intermediate 2048)。":"Dense — gate_up 4096→16384, SiluAndMul, down→4096。"),
+    en: "Decoder Layer "+foc.i+" / 48.\n"
+      + "Attention: "+(g?"global GQA 64Q/4KV":"SWA GQA 64Q/8KV, window 128")+", head_dim 192 / v 128 (asymmetric), "
+      + (g?"no attention sink.":"with attention-sink bias.")+"\n"
+      + "Fused qkv_proj then split; RoPE on the first 64/192 dims only (partial_rotary_factor 0.334); V scaled by 0.707.\n"
+      + "MLP: "+(isMoE(foc.i)?"MoE — 256 experts top-8, sigmoid scoring + noaux_tc correction bias, no shared expert (moe_intermediate 2048).":"Dense — gate_up 4096→16384, SiluAndMul, down→4096."),
+  };
+  return { title:T("LM · Decoder Layer "+foc.i,"LM · Decoder Layer "+foc.i), name, desc };
+}
+
+// returns {title,name,desc,chain} for a component focus
+function detailSpec(foc){
+  switch(foc.kind){
+    case "embed": return {
+      title: T("输入嵌入 + 多模态合流","Input embedding + multimodal merge"),
+      name: T("embed_tokens (VocabParallelEmbedding)","embed_tokens (VocabParallelEmbedding)"),
+      desc: T("input_ids 经 embed_tokens (152576×4096) 得到 token 嵌入。多模态时 general_mm_embed_routine 把 ViT / 音频编码器输出的 4096 维向量按占位符 token 位置 (image/video/audio_token_id) 散射替换进嵌入序列。两个编码器输出均已是 4096 = LM hidden,无需再投影。tie_word_embeddings=false,lm_head 独立。",
+                "input_ids → embed_tokens (152576×4096). For multimodal input, general_mm_embed_routine scatters the 4096-dim ViT / audio-encoder outputs into placeholder-token positions (image/video/audio_token_id). Both encoders already emit 4096 = LM hidden, so no extra projection. tie_word_embeddings=false; lm_head is separate."),
+      chain: [ { t:"input_ids", s:"[seq]", role:"io" }, { t:"embed_tokens", s:"152576 × 4096", role:"embed" },
+               { t:"mm scatter", s:"ViT/audio → placeholder", role:"merge" }, { t:"X", s:"[seq, 4096]", role:"io" } ] };
+    case "final": return {
+      title: T("输出头","Output head"),
+      name: T("final RMSNorm → lm_head","final RMSNorm → lm_head"),
+      desc: T("主干最后一层的 hidden 经 model.norm (RMSNorm) 归一化,再过 lm_head (ParallelLMHead 4096→152576) 得到 logits,由 LogitsProcessor 采样出下一个 token。lm_head 与 embed_tokens 不共享权重。",
+                "The final hidden state passes model.norm (RMSNorm), then lm_head (ParallelLMHead 4096→152576) to logits; LogitsProcessor samples the next token. lm_head does not share weights with embed_tokens."),
+      chain: [ { t:"hidden", s:"[seq, 4096]", role:"io" }, { t:"norm", s:"RMSNorm", role:"norm" },
+               { t:"lm_head", s:"4096 → 152576", role:"proj" }, { t:"logits → sample", s:"", role:"logits" } ] };
+    case "mtp": return {
+      title: T("MTP / nextn 草稿头","MTP / nextn draft head"),
+      name: T("MiMoV2ModelNextN — 单块递归 (EAGLE)","MiMoV2ModelNextN — single block, recursive (EAGLE)"),
+      desc: T("投机解码草稿头,物理上只有 1 个 mtp_block,EAGLE 下按 num_steps 递归运行、权重共享。流程: 输入是上一步采样出的 token id → 自己的 embed_tokens 查表(input_ids)取草稿 token 嵌入 → enorm 归一化;主干末层 hidden → hnorm 归一化 → cat 后 eh_proj (8192→4096) 融合 → mtp_block (SWA 注意力 + Dense MLP 16384) → final_layernorm → 复用 lm_head 出草稿 logits → sample 出下一个 draft token,该 token 再回喂 embed_tokens 递归下一步。",
+                "The speculative-decoding draft head. Physically one mtp_block, run recursively for num_steps under EAGLE with shared weights. Its INPUT is the previous step's sampled token id. Flow: embed_tokens(input_ids) gives the draft-token embedding → enorm; the target's last-layer hidden → hnorm → concat → eh_proj (8192→4096) → mtp_block (SWA attention + Dense MLP 16384) → final_layernorm → reuse lm_head for draft logits → sample the next draft token, which feeds back into embed_tokens for the next step."),
+      chain: [ { t:"draft token id", s:"上一步采样 / prev sampled", role:"embed" }, { t:"draft embed", s:"embed_tokens(input_ids)", role:"embed" }, { t:"enorm", s:"RMSNorm", role:"norm" },
+               { t:"target hidden", s:"hnorm (RMSNorm)", role:"norm" }, { t:"eh_proj", s:"cat → 8192 → 4096", role:"merge" },
+               { t:"mtp_block", s:"SWA attn + Dense MLP", role:"attn" }, { t:"final_layernorm", s:"RMSNorm", role:"norm" },
+               { t:"lm_head (shared)", s:"→ draft logits", role:"logits" }, { t:"sample → draft token", s:"→ 回喂 embed / loops back", role:"logits" } ] };
+    case "vitPatch": return {
+      title: T("ViT · 图像分块嵌入","ViT · patch embedding"),
+      name: T("patch_embed (Conv3d 作 linear)","patch_embed (Conv3d as linear)"),
+      desc: T("像素被切成 [temporal 2 × 16 × 16 × 3ch] 的 patch,patch_embed 声明为 Conv3d(3→1280, kernel/stride=[2,16,16]),运行时权重展平后按 F.linear 作用于展平 patch。无学习式位置嵌入,改用 2D 旋转位置编码 (row/col 两套,按窗口重排选用)。",
+                "Pixels are cut into [temporal 2 × 16 × 16 × 3ch] patches. patch_embed is a Conv3d(3→1280, kernel/stride=[2,16,16]) whose weight is flattened at runtime and applied as F.linear. No learned position embedding — 2D rotary position embedding instead (row/col variants selected by window reindex)."),
+      chain: [ { t:"pixel patch", s:"2×16×16×3", role:"io" }, { t:"patch_embed", s:"Conv3d→linear → 1280", role:"conv" },
+               { t:"2D RoPE", s:"row / col variants", role:"rope" }, { t:"tokens", s:"[N, 1280]", role:"io" } ] };
+    case "vitFull":
+    case "vitWindow": {
+      const full = foc.kind==="vitFull";
+      return {
+        title: T("ViT Block "+(foc.i??"")+(full?" · 全局":" · 窗口"), "ViT Block "+(foc.i??"")+(full?" · full":" · window")),
+        name: T(full?"全局注意力块 (无 sink)":"窗口注意力块 (window 64 + sink)", full?"full-attention block (no sink)":"window-attention block (window 64 + sink)"),
+        desc: T("ViT 共 28 块,全局注意力在第 0/9/18/27 块,其余为窗口注意力 (window = visual_token_window_size 64,合并 token 单位)。块内: norm1 (RMSNorm) → VisionAttention (GQA 32Q/8KV, head_dim 64, 融合 qkv, 带 bias"+(full?", 无 sink":", 带 sink")+") → norm2 (RMSNorm, 融合残差加) → MLP (gate_up 1280→[4608,4608], SiluAndMul, down→1280)。",
+                  "The ViT has 28 blocks; full attention at 0/9/18/27, the rest window attention (window = visual_token_window_size 64, merged-token units). Inside: norm1 (RMSNorm) → VisionAttention (GQA 32Q/8KV, head_dim 64, fused qkv, with bias"+(full?", no sink":", with sink")+") → norm2 (RMSNorm, fused residual-add) → MLP (gate_up 1280→[4608,4608], SiluAndMul, down→1280)."),
+        chain: [ { t:"norm1", s:"RMSNorm", role:"norm" }, { t:"qkv_proj", s:"fused · bias", role:"proj" },
+                 { t:"attn (GQA)", s: full?"32Q/8KV · full":"32Q/8KV · window 64", role:"split", deco:"gqa", hq:32, hkv:8 },
+                 { t: full?"(no sink)":"+ sink", s:"head_dim 64", role: full?"attn":"sink" },
+                 { t:"norm2", s:"RMSNorm (fused add)", role:"norm" }, { t:"MLP", s:"1280→4608→1280 · SiLU", role:"mlp" },
+                 { t:"+ residual", s:"", role:"res" } ] };
+    }
+    case "vitMerger": return {
+      title: T("ViT · patch merger","ViT · patch merger"),
+      name: T("Qwen2_5_VisionPatchMerger (2×2 → 4096)","Qwen2_5_VisionPatchMerger (2×2 → 4096)"),
+      desc: T("空间合并: spatial_merge_size 2 → 每 2×2=4 个相邻 token 合成 1 个。ln_q (RMSNorm 1280) → reshape 到 4×1280=5120 → mlp.0 (Linear 5120→5120) → GELU → mlp.2 (Linear 5120→4096)。输出 token 数 = 输入 patch 数 / 4,维度对齐 LM hidden 4096。",
+                "Spatial merge: spatial_merge_size 2 → every 2×2=4 adjacent tokens become 1. ln_q (RMSNorm 1280) → reshape to 5120 → mlp.0 (5120→5120) → GELU → mlp.2 (5120→4096). Output tokens = patches/4, dim aligned to LM hidden 4096."),
+      chain: [ { t:"ln_q", s:"RMSNorm 1280", role:"norm" }, { t:"group 2×2", s:"4 tokens → 5120", role:"merge" },
+               { t:"mlp.0", s:"5120 → 5120", role:"proj" }, { t:"GELU", s:"", role:"mlp" }, { t:"mlp.2", s:"5120 → 4096", role:"proj" } ] };
+    case "audioFrontend": return {
+      title: T("音频 · tokenizer 前端","Audio · tokenizer frontend"),
+      name: T("mel → conv → 8 层 → RVQ 编码","mel → conv → 8 layers → RVQ codes"),
+      desc: T("音频先经独立的 MiMoAudioTokenizer (d_model 768) 前端: conv1 (mel→768, k3) + GELU → conv2 (768→768, k3, stride 2) + GELU (2× 时间下采样) → 旋转位置编码 → 8 层 AudioEncoderTransformerLayer (768 / 12 头) → layer_norm → avg_pooler 下采样 → 残差向量量化 (RVQ) 输出离散 codes [T, 20 通道]。",
+                "Audio first passes a separate MiMoAudioTokenizer (d_model 768) frontend: conv1 (mel→768, k3) + GELU → conv2 (768→768, k3, stride 2) + GELU (2× downsample) → rotary pos-emb → 8 AudioEncoderTransformerLayers (768 / 12-head) → layer_norm → avg_pooler → residual vector quantizer (RVQ) → codes [T, 20 channels]."),
+      chain: [ { t:"mel", s:"80 bins", role:"io" }, { t:"conv1+GELU", s:"→ 768", role:"conv" },
+               { t:"conv2+GELU", s:"stride 2 (↓)", role:"conv" }, { t:"8× enc layer", s:"768 / 12-head", role:"attn" },
+               { t:"avg_pooler", s:"downsample", role:"conv" }, { t:"RVQ", s:"→ codes [T,20]", role:"rvq" } ] };
+    case "audioEmbed": return {
+      title: T("音频 · 通道嵌入 + 分组","Audio · channel embed + grouping"),
+      name: T("20 通道嵌入求和 · group_size 4","20 channel-embeddings summed · group_size 4"),
+      desc: T("离散 codes 补齐到 group_size 4 的整数倍并 reshape 成 [T/4, 4, 20]。audio_channels=20 表示每帧 20 个 RVQ 码本通道,每个通道一个独立 nn.Embedding(→1024),20 路结果逐元素求和得 [T/4, 4, 1024]。group_size=4: 4 个相邻音频帧后续会拼成 1 个 LM token。",
+                "Discrete codes are padded to a multiple of group_size 4 and reshaped to [T/4, 4, 20]. audio_channels=20 = 20 RVQ codebook channels per frame; each has its own nn.Embedding(→1024) and the 20 are summed → [T/4, 4, 1024]. group_size=4: 4 adjacent frames later collapse into 1 LM token."),
+      chain: [ { t:"codes", s:"[T, 20]", role:"io" }, { t:"pad · group 4", s:"→ [T/4, 4, 20]", role:"merge" },
+               { t:"20× ch-embed", s:"each → 1024", role:"embed" }, { t:"Σ channels", s:"→ [T/4, 4, 1024]", role:"mlp" } ] };
+    case "audioLocal": return {
+      title: T("音频 · 本地 transformer","Audio · local transformer"),
+      name: T("input_local_transformer (Qwen2 ×6)","input_local_transformer (Qwen2 ×6)"),
+      desc: T("一个标准 Qwen2Model,6 层,hidden 1024,16 头 MHA (kv=16, head_dim 64),intermediate 4096,rope_theta 640000。input_full_attention=true → 双向全注意力 (非因果)。add_post_norm=true → 保留末尾 norm。单层 = RMSNorm → 自注意力(RoPE) → RMSNorm → SwiGLU (1024→4096→1024)。",
+                "A stock Qwen2Model: 6 layers, hidden 1024, 16-head MHA (kv=16, head_dim 64), intermediate 4096, rope_theta 640000. input_full_attention=true → bidirectional full attention. add_post_norm=true keeps the final norm. Each layer = RMSNorm → self-attn (RoPE) → RMSNorm → SwiGLU (1024→4096→1024)."),
+      chain: [ { t:"RMSNorm", s:"", role:"norm" }, { t:"MHA (full)", s:"16 head · d64 · RoPE θ640k", role:"attn", deco:"gqa", hq:16, hkv:16 },
+               { t:"RMSNorm", s:"", role:"norm" }, { t:"SwiGLU", s:"1024→4096→1024", role:"mlp" }, { t:"×6 layers", s:"", role:"res" } ] };
+    case "audioProj": return {
+      title: T("音频 · 投影到 LM","Audio · projection to LM"),
+      name: T("AudioProjection (4×1024 → 4096)","AudioProjection (4×1024 → 4096)"),
+      desc: T("本地 transformer 输出 [T/4, 4, 1024],把组内 4 帧拼成 4096 维,过 AudioProjection (projection_layers=2): Linear(4096→16384) → GELU → Linear(16384→4096)。结果与 LM hidden 4096 对齐,经 mm 合流散射进 embedding 序列。",
+                "The local transformer outputs [T/4, 4, 1024]; the 4 frames are concatenated to 4096, then AudioProjection (projection_layers=2): Linear(4096→16384) → GELU → Linear(16384→4096). Result matches LM hidden 4096 and is scattered into the embedding sequence."),
+      chain: [ { t:"[T/4,4,1024]", s:"reshape → 4096", role:"io" }, { t:"Linear", s:"4096 → 16384", role:"proj" },
+               { t:"GELU", s:"", role:"mlp" }, { t:"Linear", s:"16384 → 4096", role:"proj" } ] };
+    case "lm": {
+      const info = lmInfo(foc);
+      return { ...info, chain: [ { t:"X", s:"[seq,4096]", role:"io" }, ...attnNodes(foc.attnType), ...mlpNodes(foc.mlpType), { t:"X'", s:"[seq,4096]", role:"io" } ] };
+    }
+  }
+  return null;
+}
+
+// ============================================================
+//  LAYOUT — build the whole thing once
+// ============================================================
+const GROUPS = [];   // { info:{title,name,desc}, meshes:[], region, cx, cy }
+const REGION = {};   // regionTag -> {min:{x,y}, max:{x,y}}
+const pickables = [];
+
+function extend(region, x, y){
+  const r = REGION[region] || (REGION[region] = { minx:1e9, miny:1e9, maxx:-1e9, maxy:-1e9 });
+  r.minx=Math.min(r.minx,x); r.miny=Math.min(r.miny,y); r.maxx=Math.max(r.maxx,x); r.maxy=Math.max(r.maxy,y);
+}
+
+// Layout: expanded ViT + Audio encoder pipelines stacked at the left (each a full 3D
+// transformer block), the LM I/O (input embedding + output head) fully expanded in the middle
+// beside the 48-layer tower, and the deploy section on the right where the LM layers themselves
+// are fully expanded. The expanded MTP head branches off the top. All sections use the same 3D
+// shape vocabulary (standing weight matrices + activation sheets); no abstract node chains.
+const ENC_X = 0;
+// world anchor of the MTP lm_head — used to place the "shares the main lm_head weight" text note.
+// (The two lm_head instances share ONE weight tensor at runtime via SGLang set_embed_and_head.)
+let mtpLmHeadAnchor = null;
+let mainLmHeadAnchor = null, mainBonusAnchor = null;  // main model's lm_head and bonus token anchors
+
+function buildScene(){
+  // ---- LEFT: ViT + Audio encoder pipelines, aligned 1:1 with layer-0's two DP lanes ----
+  // Both encoders flow +X (same direction as the backbone lanes) at Y = layer-0 height, and each sits on
+  // the EXACT Z of a DP lane: ViT on lane 1 (+Z), audio on lane 0 (−Z). So each encoder's input→output
+  // axis lines up with that DP lane's input→output axis, and its feed arrow runs straight into the lane.
+  const encY = runY(0);                    // both encoders sit at the backbone's first-layer height
+  const dp0 = cfg.dp;                      // layer-0 uses the current DP degree (2 in the default cfg)
+  const zVit = laneZof(Math.min(dp0-1,1), dp0);   // ViT → DP lane 1 (+Z) (or the single lane if dp=1)
+  const zAud = laneZof(0, dp0);                    // audio → DP lane 0 (−Z)
+  const vitP = buildVitPipeline(ENC_X, encY, zVit);
+  const audP = buildAudioPipeline(ENC_X, encY, zAud);
+  // EQUALISE the output→backbone gap: both encoders start at ENC_X but have different lengths, so shift
+  // each group in X to make their OUTPUT end at the same X (ENC_OUT_X), a fixed gap left of the backbone
+  // input. Arrows/labels live inside each group, so a group.position.x shift moves everything together.
+  const ENC_GAP = 10;                      // uniform gap from each encoder's output matrix to layer-0 input
+  const ENC_OUT_X = FLOOR_X - ENC_GAP;     // world X where BOTH encoder outputs should land
+  vitP.group.position.x += ENC_OUT_X - vitP.endX;  vitP.endX = ENC_OUT_X;
+  audP.group.position.x += ENC_OUT_X - audP.endX;  audP.endX = ENC_OUT_X;
+  // refresh region extents to the shifted positions (builders' extend() used the pre-shift x0)
+  delete REGION.vit; delete REGION.audio;
+  extend("vit", ENC_OUT_X - vitP.len - 4, encY-6); extend("vit", ENC_OUT_X + 2, encY+6);
+  extend("audio", ENC_OUT_X - audP.len - 4, encY-6); extend("audio", ENC_OUT_X + 2, encY+6);
+
+  // ---- deploy column = the LM backbone. After folding to ~5 segments the mesh budget is small
+  //      enough (~5×2.4k ≈ 12k) to expand EVERY segment up front and keep them all visible (no LOD
+  //      hide/collapse). buildDeployColumn still makes the collapsed strips (kept as a fallback),
+  //      then we expand all segments so nothing is hidden. ----
+  buildDeployColumn();
+  for(let r=0;r<NR;r++) buildRunDetail(r);
+
+  // multimodal encoders feed the FIRST decoder layer (layer 0) directly. Both ViT & audio project to
+  // 4096 and are scattered at placeholder tokens into layer-0's input (the standalone middle embed /
+  // output-head column was removed — only the expanded 48 layers remain).
+  // feed arrows run straight along +X into each DP lane's input (same Z as the encoder → axis-aligned).
+  conns.add(arrow(V(vitP.endX, vitP.y, vitP.z), V(FLOOR_X-2.4, runY(0), vitP.z), C.vit, 0.5));
+  conns.add(arrow(V(audP.endX, audP.y, audP.z), V(FLOOR_X-2.4, runY(0), audP.z), C.audio, 0.5));
+  root.add(pos(label("ViT / audio → 合流进 layer 0 / merged into layer 0", C.io, 0.42),
+    FLOOR_X-16, runY(0)-2.6, 0));
+
+  // ---- output head above the TOP of the column: layer 47 → model.norm → lm_head → logits ----
+  // extra vertical gap between layer 47 (COL_TOP) and the lm_head floor so the head reads as a distinct
+  // stage, not crowding the last layer.
+  const final = buildFinalPipeline(FLOOR_X, COL_TOP + 20);
+  conns.add(arrow(V(FLOOR_X, COL_TOP + 6, 0), V(FLOOR_X, final.y - 3, 0), C.io, 0.6));
+  root.add(pos(label("layer 47 → 输出头 / output head", C.io, 0.4), FLOOR_X-4, (COL_TOP+6 + final.y-3)/2, 0));
+
+  // ---- MTP (nextn) draft head above the output head ----
+  const mtpY = COL_TOP + 36;
+  buildMtpPipeline(FLOOR_X, mtpY);
+  conns.add(arrow(V(FLOOR_X-3, mtpY-6, 0), V(FLOOR_X-3, mtpY-1.5, 0), C.mtp, 0.5));
+
+  // shared-weight note: the MTP draft head reuses the SAME lm_head weight as the main output head
+  // (SGLang set_embed_and_head swaps MTP's lm_head.weight to the target's). A text note by the MTP
+  // lm_head says so — no connector line (user preferred text-only, 2026-08-06).
+  if(mtpLmHeadAnchor){
+    root.add(pos(label("↑ 与主输出头 lm_head 权重共享 / shares the main lm_head weight", C.io, 0.4),
+      mtpLmHeadAnchor.x, mtpLmHeadAnchor.y - 3.5, mtpLmHeadAnchor.z));
+  }
+  // bonus token → MTP seed: the main model's bonus(gold) token IS the MTP recursion's initial seed
+  if(mainBonusAnchor){
+    const mtpSeedAnchor = V(FLOOR_X-1.5, mtpY-SEQ*0.5-0.8, 0);
+    conns.add(line(mainBonusAnchor, mtpSeedAnchor, C.io, 0.5));
+    root.add(pos(label("bonus(金) 作为 MTP 递归种子 / bonus token seeds MTP recursion", C.io, 0.35),
+      (mainBonusAnchor.x+mtpSeedAnchor.x)/2, (mainBonusAnchor.y+mtpSeedAnchor.y)/2+2, 0));
+  }
+
+  computeSceneBounds();
+}
+
+// ============================================================
+//  48-LAYER DEPLOY COLUMN with lazy per-layer detail (LOD)
+//  All 48 layers stacked as cheap placeholder strips (always visible, colour-coded by type).
+//  Only layers near the camera get their full 8-GPU expansion built (buildExpandedFloor); the
+//  rest stay as strips. Detail is disposed when the camera moves away → live mesh count stays
+//  bounded (~ current 3-floor cost) instead of ~110k for all 48 expanded at once.
+// ============================================================
+// DP-lane pitch along Z, shared so the multimodal encoders can align to the exact lane centres.
+// laneZof(d,dp) = world Z of DP-lane d (centred group of dp lanes). For dp=2 → lanes at ∓LANE_DZ/2.
+const LANE_DZ = 20;
+const laneZof = (d, dp) => (d-(dp-1)/2)*LANE_DZ;
+const COL_Y0 = 4, COL_PITCH = 22;             // floor spacing. Each expanded floor now reaches ~±6.6 in Y
+                                              // (taller row-split matrices + 2× labels pushed to ±(halfY+1)),
+                                              // so 22 leaves a clear ~9-unit gap between adjacent floors.
+const STRIP_H = 9;                            // collapsed-layer marker height (< pitch → gaps)
+// ---- collapse the 48 layers into RUNS of consecutive same-type layers (Dense / global+MoE / SWA+MoE).
+// The backbone is highly repetitive (39 SWA+MoE, 8 global+MoE, 1 Dense), so instead of 48 tall slots we
+// draw one strip + one lazily-expanded floor per RUN, labelled with its layer range and ⟳×N multiplicity.
+// This shrinks the column from 48 → ~17 while still covering every layer. LOD keys on runs, not layers.
+// step 1: flat runs of consecutive same-type layers (Dense / global+MoE / SWA+MoE).
+function flatRuns(){
+  const runs=[]; const key = i => (isGlobal(i)?"g":"s")+(isMoE(i)?"m":"d");
+  let s=0;
+  for(let i=1;i<=N_LAYERS;i++){
+    if(i===N_LAYERS || key(i)!==key(s)){
+      runs.push({ s, e:i-1, n:i-s, attn:isGlobal(s)?"global":"swa", mlp:isMoE(s)?"moe":"dense" });
+      s=i;
+    }
+  }
+  return runs;
+}
+// step 2: detect the longest periodic block among the runs (the repeating [global+MoE, SWA+MoE×5]
+// motif). Returns {a,p,k} = block starts at run a, period p runs, repeats k times (k≥2), or null.
+function findCycle(runs){
+  const sig = r => runs[r].attn[0]+runs[r].mlp[0]+"n"+runs[r].n;
+  const N = runs.length; let best=null;
+  for(let p=1;p<=Math.floor(N/2);p++){
+    for(let a=0;a+2*p<=N;a++){
+      let k=1;
+      while(a+(k+1)*p<=N){
+        let ok=true; for(let j=0;j<p;j++) if(sig(a+k*p+j)!==sig(a+j)){ ok=false; break; }
+        if(!ok) break; k++;
+      }
+      if(k>=2){ const cov=k*p;
+        if(!best || cov>best.cov || (cov===best.cov && p<best.p)) best={a,p,k,cov}; }
+    }
+  }
+  return best;
+}
+// step 3: SEGMENTS = the floors actually drawn (each is one expandable floor). The repeating motif is
+// folded to ONE period wrapped in a ⟳×k cycle bracket, so the column shrinks to ~5 floors instead of
+// 17 runs / 48 layers. CYCLES describes the bracket(s). Every layer is still covered (prefix + cycle×k
+// + suffix). NOTE: the final layer L47 is global (full attention) and falls in the suffix → drawn as
+// its own standalone floor (user asked the last full layer be shown separately).
+function computeSegments(){
+  const runs = flatRuns();
+  const cyc = findCycle(runs);
+  const segs = []; const cycles = [];
+  if(!cyc){ runs.forEach(R=> segs.push({ ...R, cyc:-1 })); return { segs, cycles }; }
+  // prefix runs (standalone)
+  for(let r=0;r<cyc.a;r++) segs.push({ ...runs[r], cyc:-1 });
+  // one period of the cycle (its runs become cycle-member segments)
+  const cid = 0, segFrom = segs.length;
+  for(let j=0;j<cyc.p;j++) segs.push({ ...runs[cyc.a+j], cyc:cid });
+  cycles.push({ id:cid, times:cyc.k, segFrom, segTo:segs.length-1,
+                sLayer:runs[cyc.a].s, eLayer:runs[cyc.a+cyc.p*cyc.k-1].e });
+  // suffix runs after the whole periodic block (standalone) — includes the final global L47
+  for(let r=cyc.a+cyc.p*cyc.k;r<runs.length;r++) segs.push({ ...runs[r], cyc:-1 });
+  return { segs, cycles };
+}
+const _SEG = computeSegments();
+const RUNS = _SEG.segs;          // kept the name "RUNS" = the list of drawn floors
+const CYCLES = _SEG.cycles;
+const NR = RUNS.length;
+const runY = r => COL_Y0 + r*COL_PITCH;        // world Y of segment r's strip / detail
+const COL_TOP = runY(NR-1);
+const cycleOf = r => RUNS[r].cyc>=0 ? CYCLES[RUNS[r].cyc] : null;
+// per-segment LOD record: null = only the strip is shown; else { group, giRange:[s,e) }
+const runDetail = new Array(NR).fill(null);
+const runStrip  = new Array(NR).fill(null);    // {meshes:[a,m]} placeholder handle per segment
+
+function specForRun(r){
+  const R = RUNS[r];
+  return R.s===0 ? LAYER_SPEC.globalDense : (R.attn==="global" ? LAYER_SPEC.globalMoE : LAYER_SPEC.swaMoE);
+}
+// segment-aware clickable info: representative layer's text, prefixed with range / per-pass count /
+// cycle multiplicity so it's clear how many real layers this one floor stands for.
+function runInfo(R){
+  const base = lmInfo({ i:R.s, attnType:R.attn, mlpType:R.mlp });
+  const cy = R.cyc>=0 ? CYCLES[R.cyc] : null;
+  if(R.n===1 && !cy) return { title: base.name, alt: base.title, desc: base.desc };
+  const rng = R.n===1 ? ("L"+R.s) : ("L"+R.s+"–"+R.e);
+  const perPass = R.n>1 ? ("每轮 ⟳×"+R.n+" 层") : "每轮 1 层";
+  const perPassEn = R.n>1 ? ("⟳×"+R.n+"/cycle") : "1/cycle";
+  const cycTxt = cy ? ("，整段循环 ⟳×"+cy.times+"（L"+cy.sLayer+"–"+cy.eLayer+"，共 "+(R.n*cy.times)+" 层）") : "";
+  const cycTxtEn = cy ? (", cycle ⟳×"+cy.times+" (L"+cy.sLayer+"–"+cy.eLayer+", "+(R.n*cy.times)+" layers total)") : "";
+  return {
+    title: { zh: base.name.zh+"（"+rng+" 代表"+(cy?"，"+perPass+cycTxt:( R.n>1?"，"+perPass:"")) +"）",
+             en: base.name.en+" ("+rng+" repr"+(cy?", "+perPassEn+cycTxtEn:(R.n>1?", ×"+R.n:""))+")" },
+    alt: base.title,
+    desc: { zh: (cy? "这是重复单元的一部分：基本单元 [全局层 + SWA×5] 连续循环 "+cy.times+" 次，覆盖 L"+cy.sLayer+"–"+cy.eLayer+"。本楼是其中一类层的代表（"+rng+"，"+perPass+"）。权重各层独立，只是结构完全一致，故折叠。\n\n"
+                  : "本段是连续 "+R.n+" 个同类型层（"+rng+"）的代表，权重各层独立但结构一致，故折叠并标 ⟳×"+R.n+"。\n\n")+base.desc.zh,
+            en: (cy? "Part of the repeat unit: the base unit [global layer + SWA×5] cycles "+cy.times+"× covering L"+cy.sLayer+"–"+cy.eLayer+". This floor represents one layer type in it ("+rng+", "+perPassEn+"). Weights differ per layer; only the structure is identical, hence folded.\n\n"
+                  : "Represents "+R.n+" consecutive same-type layers ("+rng+"); weights differ per layer but structure is identical, so folded and marked ⟳×"+R.n+".\n\n")+base.desc.en },
+  };
+}
+
+function buildDeployColumn(){
+  const nLayersTotal = N_LAYERS;
+  // explicit arithmetic breakdown so it's obvious the fold still covers all 48 layers.
+  // e.g. "L0(1) + L1–4(4) + [L5–10 单元 6层]×7=42 + L47(1) = 48 层". built from RUNS/CYCLES.
+  const seg = []; let checkSum = 0;
+  let ci = -1;
+  for(let r=0;r<NR;r++){
+    const R = RUNS[r];
+    if(R.cyc<0){ seg.push("L"+R.s+(R.n>1?("–"+R.e):"")+"("+R.n+")"); checkSum += R.n; }
+    else if(R.cyc!==ci){                        // first segment of a cycle → emit "(unit)×k=NN"
+      ci = R.cyc; const cy = CYCLES[R.cyc];
+      let per=0; for(let k=cy.segFrom;k<=cy.segTo;k++) per+=RUNS[k].n;
+      const tot = per*cy.times;
+      seg.push("[L"+cy.sLayer+"–"+cy.eLayer+" 单元 "+per+"层]×"+cy.times+"="+tot);
+      checkSum += tot;
+    }
+  }
+  const breakdown = seg.join(" + ")+" = "+checkSum+" 层";
+
+  // section header at the TOP of the column
+  root.add(pos(label("单机 8 卡部署 · "+nLayersTotal+" 层全部覆盖，重复单元只画一遍 / single-node 8-GPU · all "+nLayersTotal+" layers, repeat unit drawn once", C.global, 0.6),
+    FLOOR_X+10, COL_TOP + 5.9, 0));
+  root.add(pos(label(breakdown+"  （"+NR+" 楼 / "+NR+" floors）", C.cyan, 0.5),
+    FLOOR_X+10, COL_TOP + 5.0, 0));
+  root.add(pos(label("tp"+cfg.tp+" · dp"+cfg.dp+" · ep"+cfg.ep+(cfg.dpAttn?" · dp-attn":"")
+    +"  ·  "+worldSize()+" GPUs = "+cfg.dp+" DP groups × "+cfg.tp+" attn-TP · EP="+cfg.ep, 0x9fb0c3, 0.42),
+    FLOOR_X+10, COL_TOP + 4.2, 0));
+  root.add(pos(label("重复的 [全局full + SWA×5] 单元只画一遍并标 ⟳×"+(CYCLES[0]?CYCLES[0].times:"N")+" · 靠近自动展开 / repeating unit drawn once · zoom to expand", 0x8b98a9, 0.4),
+    FLOOR_X+10, COL_TOP + 3.5, 0));
+
+  // one placeholder strip per SEGMENT: left = attn-type block, right = MLP-type block, colour-coded.
+  // multi-layer segments get a taller strip + a ⟳×N (per-pass) tag so folded repetition reads at a glance.
+  for(let r=0;r<NR;r++){
+    const R = RUNS[r], y = runY(r);
+    const aC = R.attn==="global" ? C.global : C.swa;
+    const mC = R.mlp==="moe" ? C.moe : C.dense;
+    const gi = GROUPS.length;
+    const h = R.n>1 ? STRIP_H*1.15 : STRIP_H*0.8;   // multi-layer segments slightly taller
+    const a = box(1.4, h, 1.4, aC, 0.96); a.position.set(FLOOR_X-0.9, y, 0); a.userData.gi=gi;
+    const m = box(1.4, h, 1.4, mC, 0.96); m.position.set(FLOOR_X+0.9, y, 0); m.userData.gi=gi;
+    root.add(a, m);
+    GROUPS.push({ info: runInfo(R), meshes:[a,m], region:"deploy", cx:FLOOR_X, cy:y, runStrip:r });
+    runStrip[r] = { meshes:[a,m], gi };
+    // range label; multi-layer segments also show per-pass ⟳×N. global segments get a brighter tag.
+    const rng = R.n===1 ? ("L"+R.s) : ("L"+R.s+"–"+R.e);
+    const typ = R.s===0 ? " · Dense" : (R.attn==="global" ? " · 全局full" : " · SWA");
+    root.add(pos(label(rng+typ, R.attn==="global"?C.global:0x9fb0c3, 0.4), FLOOR_X+2.4, y+(R.n>1?0.5:0), 0));
+    if(R.n>1) root.add(pos(label("⟳ ×"+R.n+" 层 / layers", C.cyan, 0.36), FLOOR_X+2.4, y-0.6, 0));
+
+    // STANDALONE multi-layer run (e.g. L1–4 SWA×4): give it its OWN small ⟳×N bracket on the -X side,
+    // same idiom as the big ×7 cycle bracket, so "this one floor = N looped layers" reads as clearly.
+    // (cycle-member segments are covered by the shared big bracket below, so skip those here.)
+    if(R.n>1 && R.cyc<0){
+      const yT = y + STRIP_H*0.7, yB = y - STRIP_H*0.7, bx = FLOOR_X - 3.4;
+      root.add(line(V(bx, yB, 0), V(bx, yT, 0), C.cyan, 0.85));
+      root.add(line(V(bx, yT, 0), V(bx+1.2, yT, 0), C.cyan, 0.85));
+      root.add(line(V(bx, yB, 0), V(bx+1.2, yB, 0), C.cyan, 0.85));
+      root.add(arc(V(bx, yT, 0), V(bx, yB, 0), C.cyan, 0.8, -(yT-yB)*0.5 - 1.2));
+      root.add(pos(label("⟳ ×"+R.n, C.cyan, 0.44), bx-1.8, y+0.4, 0));
+      root.add(pos(label("L"+R.s+"–"+R.e, 0x9fb0c3, 0.3), bx-1.8, y-0.4, 0));
+    }
+  }
+
+  // ---- cycle bracket(s): enclose the folded repeat unit's segments with a ⟳×k loop on the -X side ----
+  for(const cy of CYCLES){
+    const yTop = runY(cy.segTo) + STRIP_H*0.7, yBot = runY(cy.segFrom) - STRIP_H*0.7;
+    const bx = FLOOR_X - 3.4;   // bracket sits just left of the strips
+    const bracketCol = C.cyan;
+    // vertical bar + top/bottom ticks (a "[" opening toward +X)
+    root.add(line(V(bx, yBot, 0), V(bx, yTop, 0), bracketCol, 0.85));
+    root.add(line(V(bx, yTop, 0), V(bx+1.2, yTop, 0), bracketCol, 0.85));
+    root.add(line(V(bx, yBot, 0), V(bx+1.2, yBot, 0), bracketCol, 0.85));
+    // recursion return arc (top back down to bottom) on the far -X side → the "loop" visual
+    root.add(arc(V(bx, yTop, 0), V(bx, yBot, 0), bracketCol, 0.8, -(yTop-yBot)*0.18 - 1.5));
+    root.add(pos(label("⟳ ×"+cy.times+" 循环 / cycle", bracketCol, 0.5), bx-2.5, (yTop+yBot)/2, 0));
+    root.add(pos(label("基本单元 [全局full + SWA×5] / base unit", bracketCol, 0.34), bx-2.5, (yTop+yBot)/2 - 0.9, 0));
+    root.add(pos(label("覆盖 L"+cy.sLayer+"–"+cy.eLayer, 0x9fb0c3, 0.32), bx-2.5, (yTop+yBot)/2 - 1.6, 0));
+  }
+
+  // column bounds (strips only — detailed layers extend +X but frameRegion uses this box)
+  extend("deploy", FLOOR_X-10, COL_Y0-4); extend("deploy", FLOOR_X+82, COL_TOP + 6);
+  rebuildPickables();
+}
+
+// rebuild the flat pickables[] array from all live (non-null) GROUPS. Cheap at 48-layer scale and
+// avoids gi-index shifting when a mid-column detailed layer is disposed (we null the slot instead).
+function rebuildPickables(){
+  pickables.length = 0;
+  for(const g of GROUPS){ if(!g) continue; for(const m of g.meshes){ if(m) pickables.push(m); } }
+}
+
+// build the full 8-GPU detail for run r (idempotent), hide its placeholder strip.
+function buildRunDetail(r){
+  if(runDetail[r]) return;
+  const R = RUNS[r];
+  const h = buildExpandedFloor(specForRun(r), runY(r), R);   // adds to root + GROUPS
+  runDetail[r] = { group:h.group, giRange:h.giRange };
+  if(runStrip[r]) runStrip[r].meshes.forEach(m=>{ m.visible=false; });
+  rebuildPickables();
+}
+
+// dispose run r's detail: free GPU resources, null its GROUPS slots (keep gi stable), show strip.
+function disposeRunDetail(r){
+  const d = runDetail[r]; if(!d) return;
+  if(selGi>=0 && selGi>=d.giRange[0] && selGi<d.giRange[1]){ selGi=-1; renderHUD(null); }
+  d.group.traverse(o=>{
+    if(o.geometry && o.geometry!==boxGeo) o.geometry.dispose();   // dispose line/label geoms, keep shared boxGeo
+    if(o.material){
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      mats.forEach(mm=>{ if(mm.map) mm.map.dispose(); mm.dispose(); });
+    }
+  });
+  root.remove(d.group);
+  for(let gi=d.giRange[0]; gi<d.giRange[1]; gi++) GROUPS[gi] = null;   // keep indices stable
+  runDetail[r] = null;
+  if(runStrip[r]) runStrip[r].meshes.forEach(m=>{ m.visible=true; });
+  rebuildPickables();
+}
+
+// ---- LOD controller: after folding to ~5 segments we keep EVERY segment expanded & visible at all
+// times (no hide/collapse). updateLOD just guarantees all segment details exist; it never disposes.
+// (The old distance-banded build/dispose logic was only needed at the 48-layer scale.)
+let lodDirty = true, lodTick = 0;
+function markLodDirty(){ lodDirty = true; }
+function updateLOD(){
+  if(tween) return;                 // wait until a camera fly settles before touching geometry
+  for(let r=0;r<NR;r++){ if(!runDetail[r]) buildRunDetail(r); }
+}
+
+// ---- expanded ViT encoder pipeline (patch_embed → window block → full block → merger) ----
+// z0 offsets the whole pipeline along Z so ViT & audio can share the SAME Y (layer-0 height) as two
+// parallel streams without their bodies overlapping in X.
+function buildVitPipeline(x0, y, z0=0){
+  const g = new THREE.Group(); g.position.set(x0, y, z0); root.add(g);
+  const giP=GROUPS.length;
+  const patch = addPeriph(g, 0, "mat", 10, 8, C.vit, giP, "patch_embed", "Conv3d→linear→1280");
+  regGroup(giP, patch.meshes, mkInfo("vitPatch"), "vit", x0, y);
+  // window block
+  let bx = 6;
+  const giW=GROUPS.length;
+  const wb = buildXfBlock(g, bx, { Hq:32, Hkv:8, hidden:1280, headDim:64, interDim:4608, mlp:"swiglu",
+    inter:"SiluAndMul", sink:true, ropeTag:"2D RoPE", gqaColorByGroup:true }, giW, giW);
+  g.add(pos(label("窗口块 window·64 +sink / ×24", C.vit, 0.34), bx+8, SEQ*0.5+2.4, 0));
+  regGroup(giW, wb.attnMeshes.concat(wb.mlpMeshes), mkInfo("vitWindow",1), "vit", x0+bx+8, y);
+  // full block
+  bx += wb.span + 3;
+  const giF=GROUPS.length;
+  const fb = buildXfBlock(g, bx, { Hq:32, Hkv:8, hidden:1280, headDim:64, interDim:4608, mlp:"swiglu",
+    inter:"SiluAndMul", sink:false, ropeTag:"2D RoPE", gqaColorByGroup:true }, giF, giF);
+  g.add(pos(label("全局块 full·no-sink / ×4 (0,9,18,27)", C.vitFull, 0.34), bx+8, SEQ*0.5+2.4, 0));
+  regGroup(giF, fb.attnMeshes.concat(fb.mlpMeshes), mkInfo("vitFull",0), "vit", x0+bx+8, y);
+  // merger
+  bx += fb.span + 3;
+  const giM=GROUPS.length;
+  const mg = addPeriph(g, bx, "mat", 12, 10, C.vit, giM, "merger 2×2→4096", "ln_q→5120→GELU→4096");
+  regGroup(giM, mg.meshes, mkInfo("vitMerger"), "vit", x0+bx, y);
+  // inter-stage arrows added to the group g (LOCAL coords) so they inherit the pipeline's z-lane and
+  // move if the group is later shifted in X to equalise the output gap.
+  g.add(arrow(V(2,0,0), V(5.4,0,0), C.vit, 0.5));
+  g.add(arrow(V(bx-2.6,0,0), V(bx-1,0,0), C.vit, 0.5));
+  g.add(pos(label("▸ Vision ViT (×28 blocks) → 4096", C.vit, 0.55), -2, SEQ*0.5+4.2, 0));
+  const endX = x0+bx+2;
+  extend("vit", x0-4, y-6); extend("vit", endX+2, y+6);
+  return { endX, y, z:z0, group:g, len:bx+2 };
+}
+
+// ---- expanded Audio encoder pipeline (frontend → ch-embed → local xf block → projection) ----
+function buildAudioPipeline(x0, y, z0=0){
+  const g = new THREE.Group(); g.position.set(x0, y, z0); root.add(g);
+  // frontend convs (mel → 768, ×2 downsample)
+  const giFe=GROUPS.length;
+  const c1 = addPeriph(g, 0, "cube", 5, 1, C.audio, giFe, "conv1+GELU", "mel→768");
+  const c2 = addPeriph(g, 2, "cube", 5, 1, C.audio, giFe, "conv2 s2", "↓2×");
+  regGroup(giFe, c1.meshes.concat(c2.meshes), mkInfo("audioFrontend"), "audio", x0, y);
+  // tokenizer's 8-layer encoder — now FULLY EXPANDED as a representative 3D block (was a flat sheet),
+  // matching ViT / the local transformer. MiMoAudioTokenizer: 8 layers, hidden 768, 12-head MHA, d64.
+  let bx = 5;
+  const giEnc=GROUPS.length;
+  const eb = buildXfBlock(g, bx, { Hq:12, Hkv:12, hidden:768, headDim:64, interDim:3072, mlp:"dense",
+    inter:"FFN", sink:false, ropeTag:"RoPE", gqaColorByGroup:false }, giEnc, giEnc);
+  g.add(pos(label("tokenizer 编码器 ×8 (768 / 12-head) / tokenizer encoder", C.audio, 0.34), bx+8, SEQ*0.5+2.4, 0));
+  regGroup(giEnc, eb.attnMeshes.concat(eb.mlpMeshes), mkInfo("audioFrontend"), "audio", x0+bx+8, y);
+  // RVQ quantizer → discrete codes
+  bx += eb.span + 2;
+  const giRvq=GROUPS.length;
+  const rvq = addPeriph(g, bx, "cube", 5, 1, C.audio, giRvq, "RVQ", "→ codes[T,20]");
+  regGroup(giRvq, rvq.meshes, mkInfo("audioFrontend"), "audio", x0+bx, y);
+  // 20-channel embedding sum + grouping
+  bx += 3;
+  const giEm=GROUPS.length;
+  const em = addPeriph(g, bx, "mat", 10, 8, C.io, giEm, "20 ch-embed Σ", "→[T/4,4,1024]");
+  regGroup(giEm, em.meshes, mkInfo("audioEmbed"), "audio", x0+bx, y);
+  // local transformer block (Qwen2 ×6, MHA 16 heads) — already expanded
+  bx += 3;
+  const lbx = bx;
+  const giL=GROUPS.length;
+  const lb = buildXfBlock(g, lbx, { Hq:16, Hkv:16, hidden:1024, headDim:64, interDim:4096, mlp:"swiglu",
+    inter:"SwiGLU", sink:false, ropeTag:"RoPE θ640k", gqaColorByGroup:false }, giL, giL);
+  g.add(pos(label("input_local_transformer (Qwen2 ×6, full-attn)", C.audio, 0.34), lbx+8, SEQ*0.5+2.4, 0));
+  regGroup(giL, lb.attnMeshes.concat(lb.mlpMeshes), mkInfo("audioLocal"), "audio", x0+lbx+8, y);
+  const px = lbx + lb.span + 3;
+  const giPj=GROUPS.length;
+  const pj = addPeriph(g, px, "mat", 12, 10, C.audio, giPj, "projection→4096", "4096→16384→4096");
+  regGroup(giPj, pj.meshes, mkInfo("audioProj"), "audio", x0+px, y);
+  // header added to the group g (LOCAL coords) so it follows the pipeline's z-lane / X shift.
+  g.add(pos(label("▸ Audio Encoder → 4096", C.audio, 0.55), -2, SEQ*0.5+4.2, 0));
+  const endX = x0+px+2;
+  extend("audio", x0-4, y-6); extend("audio", endX+2, y+6);
+  return { endX, y, z:z0, group:g, len:px+2 };
+}
+
+// ---- expanded MTP (nextn) head: embed/enorm/hnorm→eh_proj→SWA block→final_norm→lm_head, recursion ----
+function buildMtpPipeline(x0, y){
+  const g = new THREE.Group(); g.position.set(x0, y, 0); root.add(g);
+  const giH=GROUPS.length;
+  // seed token (gold) — the main model's bonus token, fed into embed_tokens on the first recursion step
+  const seedTok = cube(C.io, giH); seedTok.scale.set(0.8,0.8,0.8); pos(seedTok, -1.5, -SEQ*0.5-0.8, 0); g.add(seedTok);
+  g.add(pos(label("seed (金 bonus)", C.io, 0.3), -1.5, -SEQ*0.5+0.5, 0));
+  addPeriph(g, 0, "sheet", SEQ, 4, C.io, giH, "draft embed", "embed_tokens(input_ids)");
+  g.add(arrow(V(-0.9, -SEQ*0.5-0.8, 0), V(-0.3, 0, 0), C.io, 0.5));  // seed → embed input
+  addPeriph(g, 2, "cube", 4, 1, C.norm, giH, "enorm", "");
+  addPeriph(g, 3.5, "cube", 4, 1, C.norm, giH, "hnorm", "target hidden");
+  const eh = addPeriph(g, 5.5, "mat", 10, 10, C.mtp, giH, "eh_proj", "cat 8192→4096");
+  // one SWA + Dense block
+  const bx = 8;
+  const blk = buildXfBlock(g, bx, { Hq:64, Hkv:8, hidden:4096, headDim:192, vHeadDim:128, interDim:16384,
+    mlp:"dense", inter:"SiluAndMul", sink:true, ropeTag:"RoPE 64/192", gqaColorByGroup:false }, giH, giH);
+  g.add(pos(label("mtp_block (SWA attn + Dense MLP)", C.mtp, 0.34), bx+8, SEQ*0.5+2.4, 0));
+  const fx = bx + blk.span + 2.5;
+  addPeriph(g, fx, "cube", 4, 1, C.norm, giH, "final_norm", "");
+  const lm = addPeriph(g, fx+2.5, "mat", 12, 8, C.io, giH, "lm_head (与主模型共享权重 / shared)", "→ draft logits");
+  // sample → draft token id: the recursion input is a TOKEN, not logits. SGLang mimo_v2_nextn.py:205
+  // embed_tokens(input_ids) — MTP consumes the previous step's sampled token id, then re-embeds it.
+  const smp = addPeriph(g, fx+5, "cube", 4, 1, C.mtp, giH, "sample", "argmax / top-p");
+  // draft token cube (blue/red) — each recursion step's output, loops back to embed_tokens
+  const draftTok = cube(0x4ea1ff, giH); draftTok.scale.set(0.8,0.8,0.8); pos(draftTok, fx+7, -SEQ*0.5-0.8, 0); g.add(draftTok);
+  g.add(pos(label("draft token id", 0x4ea1ff, 0.3), fx+7, -SEQ*0.5+0.5, 0));
+  g.add(arrow(V(fx+2.9, 0, 0), V(fx+4.4, 0, 0), C.mtp, 0.5));        // lm_head → sample
+  g.add(arrow(V(fx+5.6, 0, 0), V(fx+7, -SEQ*0.5-0.8, 0), 0x4ea1ff, 0.5)); // sample → draft token
+  const allMtp = [].concat(eh.meshes, blk.attnMeshes, blk.mlpMeshes, lm.meshes, smp.meshes, [seedTok, draftTok]);
+  regGroup(giH, allMtp, mkInfo("mtp"), "mtp", x0+bx+8, y);
+  mtpLmHeadAnchor = V(x0+fx+2.5, y, 0);   // world anchor of the MTP lm_head, for the shared-weight link
+  // recursion loop arrow (sampled draft TOKEN → back to draft embed_tokens, per EAGLE). NOTE: added to
+  // world-space conns/root, so Y must include this pipeline's world y (else it lands at the scene bottom
+  // under layer 0 and, since conns is never LOD-disposed, shows as a stray red line everywhere).
+  conns.add(arc(V(x0+fx+7, y-SEQ*0.5-0.8, 0.8), V(x0-1.5, y-SEQ*0.5-0.8, 0.8), 0x4ea1ff, 0.7, -2.5)); // draft token → seed pos
+  root.add(pos(label("↺ ×N steps (EAGLE, 采样 token 回喂 embed / sampled token → embed, 权重共享)", C.mtp, 0.34), x0+fx/2, y-SEQ*0.5-3.2, 0.8));
+  root.add(pos(label("▸ MTP (nextn) draft head", C.mtp, 0.55), x0-2, SEQ*0.5+4.2, 0));
+  const endX = x0+fx+8;
+  extend("mtp", x0-4, y-7); extend("mtp", endX+2, y+6);
+  return { endX, y };
+}
+
+// ---- expanded LM output head: hidden → model.norm → lm_head (big standing matrix) → logits ----
+function buildFinalPipeline(x0, y){
+  const g = new THREE.Group(); g.position.set(x0, y, 0); root.add(g);
+  const gi = GROUPS.length;
+  const hid = addPeriph(g, 0,   "sheet", SEQ, 6, C.io,   gi, "hidden", "[seq, 4096]");
+  const nm  = addPeriph(g, 2.5, "cube",  6,  1, C.norm, gi, "model.norm", "RMSNorm");
+  const lmh = addPeriph(g, 5,   "mat",   16, 12, C.io,  gi, "lm_head", "4096 → 152576");
+  const lg  = addPeriph(g, 10,  "cube",  5,  1, C.io,   gi, "logits", "");
+  // bonus(gold) token cube — the sampled token id from argmax/top-p, serves as MTP's recursion seed
+  const bonusTok = cube(C.io, gi); bonusTok.scale.set(0.8,0.8,0.8); pos(bonusTok, 12, -SEQ*0.5-0.8, 0); g.add(bonusTok);
+  g.add(pos(label("bonus(金 token id)", C.io, 0.3), 12, -SEQ*0.5+0.5, 0));
+  mainLmHeadAnchor = V(x0+5, y, 0);      // world anchor of main lm_head (for MTP shared-weight link)
+  mainBonusAnchor  = V(x0+12, y-SEQ*0.5-0.8, 0); // world anchor of the gold bonus token (MTP seed)
+  regGroup(gi, [].concat(hid.meshes, nm.meshes, lmh.meshes, lg.meshes, [bonusTok]), mkInfo("final"), "head", x0+5, y);
+  conns.add(arrow(V(x0+1.1, y, 0), V(x0+1.9, y, 0), C.io, 0.5));
+  conns.add(arrow(V(x0+3.1, y, 0), V(x0+1.9+2.2, y, 0), C.io, 0.5));
+  conns.add(arrow(V(x0+8.2, y, 0), V(x0+9.4, y, 0), C.io, 0.5));
+  conns.add(arrow(V(x0+10.6, y, 0), V(x0+11.4, y, 0), C.io, 0.5)); // logits → sample arrow
+  conns.add(arrow(V(x0+11.4, y-0.5, 0), V(x0+12, y-SEQ*0.5-0.8, 0), C.io, 0.5)); // sample → bonus token
+  // header added to world-space root → Y must include this pipeline's world y (not just local offset)
+  g.add(pos(label("▸ 输出头 / output head", C.io, 0.55), -2, SEQ*0.5+4.2, 0));
+  const endX = x0+11.5;
+  extend("head", x0-4, y-6); extend("head", endX+1, y+6);
+  return { endX, y };
+}
+
+// build a clickable-group info object from a detailSpec focus (title/alt/desc reused verbatim)
+function mkInfo(kind, i){
+  const spec = detailSpec(i!=null?{kind,i}:{kind});
+  return { title: spec.name, alt: spec.title, desc: spec.desc };
+}
+
+// ============================================================
+//  EXPANDED FLOORS — full 3D attention + MoE, reacting to TP/DP/EP
+//  (single-node 8-GPU: --tp 8 --dp 2 --ep 8 --enable-dp-attention)
+// ============================================================
+const LAYER_SPEC = {
+  globalDense: { attn:"global", Hq:64, Hkv:4, sink:false, mlp:"dense",
+    name:T("第 0 层 · 全局注意力 + Dense MLP","Layer 0 · global attn + Dense MLP") },
+  swaMoE: { attn:"swa", Hq:64, Hkv:8, sink:true, window:128, mlp:"moe",
+    name:T("滑窗注意力层 (SWA) + MoE","SWA layer + MoE") },
+  globalMoE: { attn:"global", Hq:64, Hkv:4, sink:false, mlp:"moe",
+    name:T("全局注意力层 + MoE","Global-attention layer + MoE") },
+};
+const HEAD_DIM = 192, V_HEAD_DIM = 128, ROPE_DIM = 64;
+
+// text for the three clickable parts of an expanded floor (source-faithful)
+function floorInfo(spec){
+  const g = spec.attn==="global";
+  const qpr = spec.Hq/cfg.tp, kvPart = spec.Hkv>=cfg.tp, kvpr = Math.max(1, Math.floor(spec.Hkv/cfg.tp));
+  const attn = {
+    title: T("注意力 · "+(g?"全局":"SWA")+" (attn-TP="+cfg.tp+")", "Attention · "+(g?"global":"SWA")+" (attn-TP="+cfg.tp+")"),
+    desc: T(
+      "DP-attention 下,本 DP 组的 4 卡持有同一批 token(组内复制),TP="+cfg.tp+" 只切"+"注意力头。\n"
+      +"qkv_proj 列并行: Q "+spec.Hq+"→ "+qpr+"/卡; KV "+spec.Hkv+(kvPart?("→ "+kvpr+"/卡(切分)"):"< TP → 复制到各卡")+"。head_dim 192 / v 128(非对称)。\n"
+      +"仅前 64/192 维走 RoPE;V 先乘 0.707;"+(g?"全局注意力,无 sink":"滑窗 128 + attention sink")+"。\n"
+      +"o_proj 行并行且 reduce_results=False —— 不在此 all-reduce,部分和留到 attn→MoE 边界的 reduce-scatter 一起做。",
+      "Under DP-attention the 4 GPUs of this DP group hold the same tokens (replicated in-group); TP="+cfg.tp+" splits only the attention heads.\n"
+      +"qkv_proj column-parallel: Q "+spec.Hq+" → "+qpr+"/GPU; KV "+spec.Hkv+(kvPart?(" → "+kvpr+"/GPU (partitioned)"):" < TP → replicated")+". head_dim 192 / v 128 (asymmetric).\n"
+      +"RoPE on the first 64/192 dims only; V ×0.707; "+(g?"global, no sink":"sliding-window 128 + attention sink")+".\n"
+      +"o_proj is row-parallel with reduce_results=False — no all-reduce here; the partial sums are deferred to the reduce-scatter at the attn→MoE boundary."),
+  };
+  const mlp = spec.mlp==="dense" ? {
+    title: T("Dense MLP (TP="+cfg.tp+")","Dense MLP (TP="+cfg.tp+")"),
+    desc: T("第 0 层是唯一的 Dense 层。gate_up_proj 列并行 4096→[16384,16384],SiluAndMul,down_proj 行并行 16384→4096;TP>1 时 down_proj 的部分和经一次 all-reduce 合成完整输出。",
+      "Layer 0 is the only Dense layer. gate_up_proj column-parallel 4096→[16384,16384], SiluAndMul, down_proj row-parallel 16384→4096; with TP>1 the down_proj partial sums are combined by one all-reduce."),
+  } : {
+    title: T("MoE · EP="+cfg.ep+" ("+Math.round(NE_TOTAL/cfg.ep)+"/卡)","MoE · EP="+cfg.ep+" ("+Math.round(NE_TOTAL/cfg.ep)+"/GPU)"),
+    desc: T(
+      "256 路由专家,无共享专家。gate(4096→256, sigmoid) → 分组 top-8(noaux_tc 校正偏置, n_group=1)。\n"
+      +"EP="+cfg.ep+": 每卡 "+Math.round(NE_TOTAL/cfg.ep)+" 个专家。token 经 all-to-all dispatch 发到专家所在卡 → 各卡跑 SwiGLU(4096→2048→4096) → all-to-all combine 送回并按 router 概率加权求和。\n"
+      +"deepep 路径无 combine 后 all-reduce(combine 已把 token 送回属主卡)。",
+      "256 routed experts, no shared expert. gate (4096→256, sigmoid) → grouped top-8 (noaux_tc correction bias, n_group=1).\n"
+      +"EP="+cfg.ep+": "+Math.round(NE_TOTAL/cfg.ep)+" experts/GPU. Tokens go via all-to-all dispatch to expert-owning GPUs → per-GPU SwiGLU (4096→2048→4096) → all-to-all combine back + router-weighted sum.\n"
+      +"The deepep path has no post-combine all-reduce (combine already returns tokens to their owner GPU)."),
+  };
+  const comm = {
+    title: T("集合通信 · DP-attn → EP","Collectives · DP-attn → EP"),
+    desc: T(
+      "一层内的通信顺序(核实自 communicator.py / dp_attention.py):\n"
+      +"① prepare_attn: input_layernorm → attn-TP 组内 all-gather(SCATTERED→TP_ATTN_FULL,上一层延后的重聚)。\n"
+      +"② attn→MoE 边界: reduce-scatter(TP_ATTN_FULL→SCATTERED),同时把 o_proj 的部分和求和(融合了延后的 o_proj all-reduce)并散射成每卡不相交的 1/8 token。\n"
+      +"③ gate/top-k 在各卡自己的 1/8 token 上跑 —— gate 前没有 all-gather。跨 DP 组的 token 交换只发生在专家 all-to-all(EP=8 跨全部 8 卡)。\n"
+      +"④ 层尾 postprocess 是 no-op;回到 TP_ATTN_FULL 的重聚推迟到下一层的 prepare_attn。",
+      "Per-layer collective order (verified from communicator.py / dp_attention.py):\n"
+      +"① prepare_attn: input_layernorm → all-gather within the attn-TP group (SCATTERED→TP_ATTN_FULL, the previous layer's deferred re-gather).\n"
+      +"② attn→MoE boundary: reduce-scatter (TP_ATTN_FULL→SCATTERED) — sums the o_proj partials (fuses the deferred o_proj all-reduce) AND scatters to a disjoint 1/8 token shard per GPU.\n"
+      +"③ gate/top-k run per-GPU on each GPU's own 1/8 of tokens — there is NO all-gather before the gate. Cross-DP-group token exchange happens only in the expert all-to-all (EP=8 across all 8 GPUs).\n"
+      +"④ End-of-layer postprocess is a no-op; the re-gather to TP_ATTN_FULL is deferred to the next layer's prepare_attn."),
+  };
+  return { attn, mlp, comm };
+}
+
+const FLOOR_X = 124, FLOOR_PITCH = 18;   // taller sheets (16 rows) + ±5.3 labels need more vertical room
+
+// build ONE expanded decoder layer at height y. dp lanes along Z; TP colours heads; EP shards experts.
+// ALL geometry (heads/weights, EP experts, all-to-all lines, labels, header) lives under a single
+// group `F` positioned at (FLOOR_X, y) — so a lazy LOD controller can build/dispose one layer at once.
+// Returns { group, giRange:[start,end) } for disposal. Coords inside are LOCAL to (FLOOR_X, y).
+// `run` (optional): the RUN this floor represents; if run.n>1 a ⟳×N loop arc + label is drawn to
+// show that this one expanded floor stands for N consecutive identical layers.
+function buildExpandedFloor(spec, y, run){
+  const dp = cfg.dp, tp = cfg.tp, ep = cfg.ep;
+  const F = new THREE.Group(); F.position.set(FLOOR_X, y, 0); root.add(F);
+  const giStart = GROUPS.length;
+  const info = floorInfo(spec);
+  const laneDZ = LANE_DZ, laneZ = d => laneZof(d, dp);   // DP-lane pitch (Z). col-split matrices grew ~+3 Z
+                                                         // from TP-shard gaps, so widen lanes 14→20 for clear separation.
+  // X anchors on a UNIFORM grid (pitch PX) so every stage is evenly spaced along the data-flow axis.
+  // (was irregular 2–7 spacing; small within-stage offsets like V-heads +2.2 / dense act +4 stay.)
+  const PX = 5;
+  const XIN=0*PX, XWQ=1*PX, XWK=2*PX, XWV=3*PX, XHEAD=4*PX, XKV=5*PX, XSCORE=6*PX, XCTX=7*PX,
+        XWO=8*PX, XOUT=9*PX, XRES1=10*PX, XRS=11*PX, XGATE=12*PX, XEXP=13*PX, XRES2=14*PX, XLOUT=15*PX;
+  const attnMeshes=[], mlpMeshes=[], commMeshes=[];
+  const giAttn=GROUPS.length, giMlp=giAttn+1, giComm=giAttn+2;
+  // type colour used for the floor header (global=blue / SWA=orange), kept as a subtle at-a-glance cue.
+  const attnTypeCol = spec.attn==="global" ? C.global : C.swa;
+
+  const qpr = spec.Hq/tp, kvPart = spec.Hkv>=tp;
+  const nQ = Math.min(spec.Hq, Math.max(2, tp*2));        // representative Q heads drawn
+  const qRankOf = h => Math.floor(h / (nQ/tp));
+  const kvRankOf = g => kvPart ? Math.floor(g / Math.max(1, spec.Hkv/tp)) : -1; // -1 = replicated
+  const headGapZ = 1.0;   // > head Z-depth (0.6) so fanned heads never intersect (no z-fight/flicker)
+
+  for(let d=0; d<dp; d++){
+    const z0 = laneZ(d), Z = z => z0 + z;
+    // input X
+    const xg = makeHead(0xc4d0de, SEQ, 0.9, 8, giAttn); pos(xg, XIN, 0, z0); F.add(xg); attnMeshes.push(...xg.children);
+    F.add(pos(label((dp>1?"["+d+"] ":"")+"X seq×4096", 0xc4d0de, 0.34), XIN, SEQ*0.5+0.5, z0));
+    if(dp>1) F.add(pos(label("DP rank "+d+" · 不相交 token / disjoint", 0x9aa7b8, 0.32), XIN-2.5, SEQ*0.5+1.3, z0));
+    // W_Q / W_K / W_V — standing weight matrices (YZ plane), column-parallel; KV width shrinks with Hkv
+    const qS=spec.Hq*HEAD_DIM, kS=spec.Hkv*HEAD_DIM, vS=spec.Hkv*V_HEAD_DIM, oIn=spec.Hq*V_HEAD_DIM;
+    const perG = n => tp>1 ? (n+"→"+Math.round(n/tp)) : (""+n);
+    // head-block gap dropped when TP dividers are shown, else the 4-col blocks and the
+    // tp-col divider lines misalign and chop the sheet into ragged segments (e.g. 6 for tp4).
+    // split-dim = 16 (Q) / 8 (KV), multiples of 8 so tp∈{1,2,4,8} divides evenly → even TP bands, dividers land in gaps.
+    // head-block gap dropped when TP dividers show, else 4-col blocks and tp-col lines misalign into ragged segments.
+    const wQ = makeMatrix(12, 16, C.qh, giAttn, tp>1?0:4, tp>1?{axis:"col",n:tp}:null); pos(wQ, XWQ,0,z0); F.add(wQ); attnMeshes.push(...wQ.children.filter(c=>c._mat));
+    const wK = makeMatrix(12, 8, kvPart?C.kh:REPLICATE_COL, giAttn, (tp>1&&kvPart)?0:4, (tp>1&&kvPart)?{axis:"col",n:tp}:null); pos(wK, XWK,0,z0); F.add(wK); attnMeshes.push(...wK.children.filter(c=>c._mat));
+    const wV = makeMatrix(12, 8, kvPart?C.vh:REPLICATE_COL, giAttn, (tp>1&&kvPart)?0:4, (tp>1&&kvPart)?{axis:"col",n:tp}:null); pos(wV, XWV,0,z0); F.add(wV); attnMeshes.push(...wV.children.filter(c=>c._mat));
+    { const qy = matHalfY(12, 1) + 1.0;   // col-split doesn't grow Y; clear silhouette + big text
+      F.add(pos(label("qkv_proj col-parallel", C.qh, 0.28), XWK, qy, z0));
+      F.add(pos(label("4096 → ["+perG(qS)+" | "+perG(kS)+" | "+perG(vS)+"]", 0x9fb0c3, 0.32), XWK, -qy, z0));
+      F.add(pos(label("Q="+spec.Hq+"×192 · K="+spec.Hkv+"×192 · V="+spec.Hkv+"×128", 0x9fb0c3, 0.3), XWK, -qy-0.75, z0)); }
+    // Q head fan (coloured by TP rank) — each head thin along Z (axis 'x') so fanned heads don't overlap
+    for(let h=0; h<nQ; h++){
+      const zc = Z((h-(nQ-1)/2)*headGapZ);
+      const hd = makeHead(rankColor(qRankOf(h)), SEQ, 0.7, 3, giAttn, "x"); pos(hd, XHEAD, 0, zc); F.add(hd);
+      attnMeshes.push(...hd.children);
+    }
+    F.add(pos(label("Q×"+spec.Hq+" ("+qpr+"/GPU)", C.qh, 0.3), XHEAD, SEQ*0.5+0.9, z0));
+    { const rp=makeRope(); pos(rp, XHEAD, SEQ*0.5+1.7, z0); F.add(rp);
+      F.add(pos(label("RoPE 64/192", C.rope, 0.26), XHEAD+1.3, SEQ*0.5+1.7, z0)); }
+    // K / V heads — thin along Z (axis 'x') and fanned at headGapZ so neighbours never intersect
+    for(let gk=0; gk<spec.Hkv; gk++){
+      const zc = Z((gk-(spec.Hkv-1)/2)*headGapZ);
+      const col = kvRankOf(gk)>=0 ? rankColor(kvRankOf(gk)) : REPLICATE_COL;
+      const kh = makeHead(col, SEQ, 0.6, 3, giAttn, "x"); pos(kh, XKV, 0, zc); F.add(kh); attnMeshes.push(...kh.children);
+      const vh = makeHead(col, SEQ, 0.6, 2, giAttn, "x"); pos(vh, XKV+2.2, 0, zc); F.add(vh); attnMeshes.push(...vh.children);
+    }
+    F.add(pos(label("K/V×"+spec.Hkv+(kvPart?" (split)":" (replicated)"), C.kh, 0.28), XKV, SEQ*0.5+0.9, z0));
+    F.add(pos(label("v·0.707", C.vh, 0.24), XKV+2.2, -SEQ*0.5-0.6, z0));
+    // scores / softmax + sink marker
+    const sc = makeHead(0xe5484d, SEQ, 0.9, SEQ, giAttn); pos(sc, XSCORE,0,z0); F.add(sc); attnMeshes.push(...sc.children);
+    F.add(pos(label(spec.sink?"QKᵀ softmax +sink":"QKᵀ softmax", 0xe5484d, 0.28), XSCORE, SEQ*0.5+0.6, z0));
+    // SWA layers get a real sink-token block + a sliding-window band prepended to the score sheet — a
+    // physical presence/absence cue so SWA vs global is obvious even from afar (global draws neither).
+    if(spec.sink){
+      const sink = box(0.9, 0.9, 0.9, C.swa, 0.98); pos(sink, XSCORE-1.6, SEQ*0.5-0.2, z0); sink.userData.gi=giAttn;
+      F.add(sink); attnMeshes.push(sink);
+      F.add(pos(label("sink", C.swa, 0.24), XSCORE-1.6, SEQ*0.5+0.6, z0));
+      const win = box(0.35, SEQ*0.9, SEQ*0.55, C.swa, 0.4); pos(win, XSCORE-0.7, 0, z0); win.userData.gi=giAttn;
+      F.add(win); attnMeshes.push(win);
+      F.add(pos(label("window 128", C.swa, 0.22), XSCORE-0.7, -SEQ*0.5-0.6, z0));
+    }
+    // context, W_O (row-parallel, reduce deferred), attn out, res1
+    const ctx = makeHead(C.ctx, SEQ, 0.9, 8, giAttn); pos(ctx, XCTX,0,z0); F.add(ctx); attnMeshes.push(...ctx.children);
+    F.add(pos(label("attn_output", C.ctx, 0.28), XCTX, SEQ*0.5+0.6, z0));
+    const wO = makeMatrix(16, 12, C.wo, giAttn, 0, tp>1?{axis:"row",n:tp}:null); pos(wO, XWO,0,z0); F.add(wO); attnMeshes.push(...wO.children.filter(c=>c._mat));
+    { const oy = matHalfY(16, tp>1?tp:1) + 1.0;   // clear of the (row-split) matrix silhouette + big text
+      F.add(pos(label(tp>1?"o_proj row-parallel · reduce deferred":"o_proj", C.wo, 0.26), XWO, oy, z0));
+      F.add(pos(label((tp>1?perG(oIn):oIn)+" → 4096", 0x9fb0c3, 0.32), XWO, -oy, z0)); }
+    const out = makeHead(0x9aa7b8, SEQ, 0.9, 8, giAttn); pos(out, XOUT,0,z0); F.add(out); attnMeshes.push(...out.children);
+    const r1 = makeHead(C.res, SEQ, 0.9, 8, giAttn); pos(r1, XRES1,0,z0); F.add(r1); attnMeshes.push(...r1.children);
+    F.add(pos(label("⊕ 残差① / res①", C.res, 0.26), XRES1, SEQ*0.5+0.6, z0));
+
+    // reduce-scatter node (attn→MoE boundary) — MoE layers only; Dense keeps per-lane MLP
+    if(spec.mlp==="moe"){
+      const rs = box(1.1, SEQ*0.9, 1.1, C.rs, 0.95); pos(rs, XRS,0,z0); rs.userData.gi=giComm; F.add(rs); commMeshes.push(rs);
+      F.add(pos(label(tp>1?"reduce-scatter (fused o_proj)":"scatter", C.rs, 0.28), XRS, SEQ*0.5+0.7, z0));
+      const l = arc(V(XRES1+0.5,0,z0), V(XRS-0.5,0,z0), C.rs, 0.7, -0.6); F.add(l); commMeshes.push(l);
+    }
+
+    // ---- Dense MLP path (per lane) ----
+    if(spec.mlp==="dense"){
+      const wUp = makeMatrix(12, 16, 0x8fb8ff, giMlp, 0, tp>1?{axis:"col",n:tp}:null);
+      pos(wUp, XGATE,0,z0); F.add(wUp); mlpMeshes.push(...wUp.children.filter(c=>c._mat));
+      { const gy = matHalfY(12, 1) + 1.0;   // gate_up: 12-row col-split (Y not grown)
+        F.add(pos(label(tp>1?"gate_up_proj col-parallel":"gate_up_proj", 0x8fb8ff, 0.26), XGATE, gy, z0));
+        F.add(pos(label("4096 → 2×"+(tp>1?("16384→"+Math.round(16384/tp)):"16384"), 0x9fb0c3, 0.32), XGATE, -gy, z0)); }
+      const act = makeHead(C.inter, SEQ, 0.9, 14, giMlp); pos(act, XGATE+4,0,z0); F.add(act); mlpMeshes.push(...act.children);
+      F.add(pos(label("SiluAndMul", C.inter, 0.26), XGATE+4, SEQ*0.5+0.6, z0));
+      F.add(pos(label("→ "+(tp>1?Math.round(16384/tp):16384), 0x9fb0c3, 0.3), XGATE+4, -SEQ*0.5-0.7, z0));
+      const wDn = makeMatrix(16, 12, C.wo, giMlp, 0, tp>1?{axis:"row",n:tp}:null);
+      pos(wDn, XEXP+2,0,z0); F.add(wDn); mlpMeshes.push(...wDn.children.filter(c=>c._mat));
+      { const dy = matHalfY(16, tp>1?tp:1) + 1.0;   // down_proj: 16-row row-split (Y grown by gaps)
+        F.add(pos(label(tp>1?"down_proj row-parallel +AllReduce":"down_proj", C.wo, 0.26), XEXP+2, dy, z0));
+        F.add(pos(label((tp>1?("16384→"+Math.round(16384/tp)):"16384")+" → 4096", 0x9fb0c3, 0.32), XEXP+2, -dy, z0)); }
+    }
+
+    // residual② + layer output (both paths)
+    const r2 = makeHead(C.res, SEQ, 0.9, 8, giMlp); pos(r2, XRES2,0,z0); F.add(r2); mlpMeshes.push(...r2.children);
+    F.add(pos(label("⊕ 残差② / res②", C.res, 0.26), XRES2, SEQ*0.5+0.6, z0));
+    const lout = makeHead(0xb9c4d2, SEQ, 0.9, 8, giMlp); pos(lout, XLOUT,0,z0); F.add(lout); mlpMeshes.push(...lout.children);
+    F.add(pos(label((dp>1?"["+d+"] ":"")+"layer output", 0xb9c4d2, 0.28), XLOUT, SEQ*0.5+0.6, z0));
+    // skip/residual arc res1→res2
+    F.add(arc(V(XRES1,-SEQ*0.5-0.3,z0), V(XRES2,-SEQ*0.5-0.3,z0), C.res, 0.5, -1.6));
+  }
+
+  // ---- MoE: ONE EP-sharded expert block centred at z=0; lanes all-to-all into it ----
+  if(spec.mlp==="moe"){
+    // gate per lane
+    for(let d=0; d<dp; d++){
+      const z0=laneZ(d);
+      const gate = makeMatrix(12, 8, C.audio, giMlp, 0, null); pos(gate, XGATE,0,z0); F.add(gate); mlpMeshes.push(...gate.children.filter(c=>c._mat));
+      F.add(pos(label((dp>1?"["+d+"] ":"")+"gate→top-8", C.audio, 0.26), XGATE, 4.2, z0));
+      F.add(pos(label("4096 → 256", 0x9fb0c3, 0.32), XGATE, -4.2, z0));
+    }
+    const nE = Math.min(NE_TOTAL, Math.max(ep, ep*4));    // representative experts drawn
+    const eOwner = e => Math.floor(e / (nE/ep));
+    // spacing must exceed the widest cube z-depth (0.8) so neighbours never intersect (no z-fight)
+    const eZ = 1.15, eDepth = 0.8, expZ = e => (e-(nE-1)/2)*eZ;
+    // experts group is LOCAL to F: sits at x=XEXP within the layer (F already at FLOOR_X,y).
+    const experts = new THREE.Group(); experts.position.set(XEXP, 0, 0); F.add(experts);
+    const expAnchor=[];
+    for(let e=0;e<nE;e++){
+      const col=rankColor(eOwner(e)), z=expZ(e);
+      const up=cube(col, giMlp); up.scale.set(0.5,1.6,eDepth); up.position.set(-1.2,0,z);
+      const mid=cube(C.inter, giMlp); mid.scale.set(0.5,0.9,eDepth); mid.position.set(0,0,z);
+      const dn=cube(col, giMlp); dn.scale.set(0.5,0.9,eDepth); dn.position.set(1.2,0,z);
+      experts.add(up,mid,dn); mlpMeshes.push(up,mid,dn);
+      // anchors LOCAL to F (all-to-all lines are added to F too)
+      expAnchor.push({ up:V(XEXP-1.2, 0, z), dn:V(XEXP+1.2, 0, z) });
+    }
+    // EP owner boundary lines
+    if(ep>1) for(let r=1;r<ep;r++){ const bz=(expZ(r*(nE/ep)-1)+expZ(r*(nE/ep)))/2;
+      experts.add(line(V(-1.8,0,bz), V(1.8,0,bz), 0xd0d8e4, 0.5)); }
+    F.add(pos(label(NE_TOTAL+" experts · top-"+TOPK+" · EP "+Math.round(NE_TOTAL/ep)+"/GPU×"+ep+" · no shared expert",
+      0x8fb8ff, 0.4), XEXP, SEQ*0.5+1.9, 0));
+    F.add(pos(label("each expert SwiGLU: 4096 →2×2048 →4096", 0x9fb0c3, 0.34), XEXP, SEQ*0.5+1.3, 0));
+    // all-to-all dispatch (res1 → experts) and combine (experts → res2), per lane.
+    // lines live under F (local space) → endpoints use LOCAL y (ty), matching experts/expAnchor.
+    const routeOf = i => { const a=[]; for(let k=0;k<Math.min(TOPK,nE);k++) a.push((i*3+k*5)%nE); return a; };
+    for(let d=0; d<dp; d++){
+      const z0=laneZ(d);
+      for(let i=0;i<SEQ;i++) for(const e of routeOf(i)){
+        const ty=(i-(SEQ-1)/2)*0.9;
+        const ld=line(V(XRS,ty,z0), expAnchor[e].up, C.comm, 0.0); F.add(ld); commMeshes.push(ld);
+        const lc=line(expAnchor[e].dn, V(XRES2,ty,z0), C.comm, 0.0); F.add(lc); commMeshes.push(lc);
+      }
+    }
+    // reveal dispatch/combine lines faintly so they read as all-to-all
+    commMeshes.forEach(m=>{ if(m.material && m.material.opacity===0) m.material.opacity=0.18; });
+  }
+
+  // register the 2-3 clickable groups for this floor
+  const cx = FLOOR_X + XHEAD;
+  GROUPS.push({ info:{ title:info.attn.title, alt:spec.name, desc:info.attn.desc }, meshes:attnMeshes.filter(Boolean), region:"deploy", cx, cy:y });
+  GROUPS.push({ info:{ title:info.mlp.title, alt:spec.name, desc:info.mlp.desc }, meshes:mlpMeshes.filter(Boolean), region:"deploy", cx:FLOOR_X+XEXP, cy:y });
+  GROUPS.push({ info:{ title:info.comm.title, alt:spec.name, desc:info.comm.desc }, meshes:commMeshes.filter(Boolean), region:"deploy", cx:FLOOR_X+XRS, cy:y });
+  // comm meshes need their gi stamped (heads/weights already got it via makeHead/makeMatrix gi arg).
+  commMeshes.filter(Boolean).forEach(m=>{ if(m.userData) m.userData.gi=giComm; });
+  // pickables are rebuilt from live GROUPS by rebuildPickables() after build/dispose.
+
+  // floor header (local to F) — coloured by attn type so the layer-kind reads from the header;
+  // for a folded run (n>1) show the layer range + ⟳×N so this one floor reads as "repeats N times".
+  const hdr = run && run.n>1
+    ? "▸ "+spec.name[LANG]+"   ⟳ ×"+run.n+"  (L"+run.s+"–"+run.e+")"
+    : "▸ "+spec.name[LANG];
+  F.add(pos(label(hdr, attnTypeCol, 0.5), -2, SEQ*0.5+2.2, 0));
+  // folded run: a recursion loop arc from the layer output back to the input, tagged ⟳×N — the
+  // visual "this block repeats N times" cue (same idiom as the MTP recursion arc).
+  if(run && run.n>1){
+    // recursion arc represents the WHOLE floor repeating, not one DP lane. Place it BEHIND the furthest
+    // lane (z = last-lane Z + margin) so it doesn't hang under just one lane. (Bug fix: old zf=(dp-1)*7+1.5
+    // ≈8.5 landed right beside the +z lane at +10, making it look like only that DP had a long trailing line.)
+    const yb = -SEQ*0.5-1.2, zf = laneZof(dp-1, dp) + 6;
+    F.add(arc(V(XLOUT, yb, zf), V(XIN, yb, zf), C.cyan, 0.7, -2.6));
+    F.add(pos(label("⟳ ×"+run.n+" 层结构相同 / identical layers", C.cyan, 0.4), (XIN+XLOUT)/2, yb-2.0, zf));
+  }
+  return { group:F, giRange:[giStart, GROUPS.length], y, giAttn };
+}
+
+// ============================================================
+//  EXPANDED single-lane transformer block (for ViT / Audio / MTP)
+//  — same shape vocabulary as the LM floors, but no TP/DP/EP sharding.
+// ============================================================
+// A "peripheral" stage: a labelled standing matrix or activation sheet (embed, conv, proj, merger).
+// kind: "mat" (standing weight) | "sheet" (activation) | "cube" (opaque op block).
+function addPeriph(g, x, kind, rows, cols, color, gi, title, sub){
+  let node;
+  if(kind==="mat") node = makeMatrix(rows, cols, color, gi, 0, null);
+  else if(kind==="sheet") node = makeHead(color, rows, 0.9, cols, gi);
+  else { node = cube(color, gi); node.scale.set(1.0, Math.min(4,rows*0.5), 1.0); }
+  pos(node, x, 0, 0); g.add(node);
+  const meshes = node.children ? node.children.filter(c=>c._mat) : [node];
+  const topY = kind==="mat" ? (rows-1)/2*0.62+0.7 : rows*0.5+0.7;
+  if(title) g.add(pos(label(title, color, 0.3), x, topY, 0));
+  if(sub) g.add(pos(label(sub, 0x9fb0c3, 0.32), x, -topY, 0));
+  return { meshes, x };
+}
+// one expanded attention+MLP block (single device). opt: {Hq,Hkv,headDim,mlp:"dense"|"swiglu",
+// inter, sink, ropeTag, gqaColorByGroup}. Returns {span, attnMeshes, mlpMeshes}.
+function buildXfBlock(g, x0, opt, giAttn, giMlp){
+  const A=[], M=[];
+  const nQ = Math.min(opt.Hq, 8), nKV = Math.min(opt.Hkv, 8);
+  const perGrp = Math.max(1, Math.round(opt.Hq/opt.Hkv));
+  const grpOf = h => Math.floor(h / Math.max(1, nQ/nKV));
+  const headCol = h => opt.gqaColorByGroup ? GPU_COLS[grpOf(h)%GPU_COLS.length] : C.qh;
+  const seq = SEQ, gapZ = 1.0;   // > head Z-depth (0.6) so fanned heads never intersect (no z-fight)
+  // real dims for shape labels
+  const h = opt.hidden, hd = opt.headDim, vhd = opt.vHeadDim||hd, inter = opt.interDim;
+  const qkvOut = (opt.Hq*hd)+"|"+(opt.Hkv*hd)+"|"+(opt.Hkv*vhd), oIn = opt.Hq*vhd;
+  const shp = (x,y,t)=> g.add(pos(label(t, 0x9fb0c3, 0.3), x, y, 0));
+  // X anchors on a UNIFORM grid (pitch PXB) so stages are evenly spaced (was irregular 1.6–3.5).
+  const PXB = 3.2, K = ["in","ln1","wqkv","q","kv","sc","ctx","wo","res1","ln2","mUp","mAct","mDn","res2","out"];
+  const dX = {}; K.forEach((k,i)=> dX[k] = i*PXB);
+  const X = k => x0 + dX[k];
+  // input
+  const xin = makeHead(0xc4d0de, seq, 0.9, 6, giAttn); pos(xin, X("in"),0,0); g.add(xin); A.push(...xin.children);
+  g.add(pos(label("X", 0xc4d0de, 0.3), X("in"), seq*0.5+0.6, 0));
+  // norm1
+  const ln1 = cube(C.norm, giAttn); ln1.scale.set(0.6, seq*0.9, 1.2); pos(ln1, X("ln1"),0,0); g.add(ln1); A.push(ln1);
+  g.add(pos(label("norm1", C.norm, 0.24), X("ln1"), seq*0.5+0.6, 0));
+  // W_qkv (fused, standing)
+  const wqkv = makeMatrix(12, 12, C.qh, giAttn, 4, null); pos(wqkv, X("wqkv"),0,0); g.add(wqkv); A.push(...wqkv.children.filter(c=>c._mat));
+  const my12 = matHalfY(12,1) + 1.0;   // label clearance for a 12-row standing matrix (+ big text)
+  g.add(pos(label("qkv_proj", C.qh, 0.26), X("wqkv"), my12, 0));
+  shp(X("wqkv"), -my12, h+" → "+qkvOut);
+  shp(X("wqkv"), -my12-0.9, "Q "+opt.Hq+"×"+hd+" · K "+opt.Hkv+"×"+hd+" · V "+opt.Hkv+"×"+vhd);
+  // Q head fan (coloured by KV-group so GQA sharing reads) — thin along Z so fanned heads don't overlap
+  for(let h=0; h<nQ; h++){
+    const hh = makeHead(headCol(h), seq, 0.7, 3, giAttn, "x"); pos(hh, X("q"),0,(h-(nQ-1)/2)*gapZ); g.add(hh); A.push(...hh.children);
+  }
+  g.add(pos(label("Q×"+opt.Hq, C.qh, 0.28), X("q"), seq*0.5+0.9, 0));
+  { const rp=makeRope(); pos(rp, X("q"), seq*0.5+1.7, 0); g.add(rp);
+    g.add(pos(label(opt.ropeTag||"RoPE", C.rope, 0.24), X("q")+1.1, seq*0.5+1.7, 0)); }
+  // K / V heads (grouped)
+  for(let k=0;k<nKV;k++){
+    const col = opt.gqaColorByGroup ? GPU_COLS[k%GPU_COLS.length] : C.kh;
+    const kh = makeHead(col, seq, 0.6, 3, giAttn, "x"); pos(kh, X("kv"),0,(k-(nKV-1)/2)*gapZ); g.add(kh); A.push(...kh.children);
+    const vh = makeHead(col===C.kh?C.vh:col, seq, 0.6, 2, giAttn, "x"); pos(vh, X("kv")+2.0,0,(k-(nKV-1)/2)*gapZ); g.add(vh); A.push(...vh.children);
+  }
+  g.add(pos(label("K/V×"+opt.Hkv+(opt.Hq>opt.Hkv?" (GQA "+perGrp+":1)":""), C.kh, 0.26), X("kv"), seq*0.5+0.9, 0));
+  // scores/softmax (+sink)
+  const sc = makeHead(0xe5484d, seq, 0.9, seq, giAttn); pos(sc, X("sc"),0,0); g.add(sc); A.push(...sc.children);
+  g.add(pos(label(opt.sink?"QKᵀ softmax +sink":"QKᵀ softmax", 0xe5484d, 0.26), X("sc"), seq*0.5+0.6, 0));
+  // attn_output, o_proj, res1
+  const ctx = makeHead(C.ctx, seq, 0.9, 6, giAttn); pos(ctx, X("ctx"),0,0); g.add(ctx); A.push(...ctx.children);
+  g.add(pos(label("attn_output", C.ctx, 0.24), X("ctx"), seq*0.5+0.6, 0));
+  const wo = makeMatrix(12, 12, C.wo, giAttn, 0, null); pos(wo, X("wo"),0,0); g.add(wo); A.push(...wo.children.filter(c=>c._mat));
+  g.add(pos(label("o_proj", C.wo, 0.24), X("wo"), my12, 0));
+  shp(X("wo"), -my12, oIn+" → "+h);
+  const r1 = makeHead(C.res, seq, 0.9, 6, giAttn); pos(r1, X("res1"),0,0); g.add(r1); A.push(...r1.children);
+  g.add(pos(label("⊕ res①", C.res, 0.24), X("res1"), seq*0.5+0.6, 0));
+  // norm2
+  const ln2 = cube(C.norm, giMlp); ln2.scale.set(0.6, seq*0.9, 1.2); pos(ln2, X("ln2"),0,0); g.add(ln2); M.push(ln2);
+  g.add(pos(label("norm2", C.norm, 0.24), X("ln2"), seq*0.5+0.6, 0));
+  // MLP (dense gate_up→act→down, or swiglu)
+  const wUp = makeMatrix(12, 18, 0x8fb8ff, giMlp, 0, null); pos(wUp, X("mUp"),0,0); g.add(wUp); M.push(...wUp.children.filter(c=>c._mat));
+  g.add(pos(label(opt.mlp==="swiglu"?"gate_up (SwiGLU)":"gate_up", 0x8fb8ff, 0.24), X("mUp"), my12, 0));
+  shp(X("mUp"), -my12, h+" → 2×"+inter);
+  const act = makeHead(C.inter, seq, 0.9, 10, giMlp); pos(act, X("mAct"),0,0); g.add(act); M.push(...act.children);
+  g.add(pos(label(opt.inter||"SiluAndMul", C.inter, 0.24), X("mAct"), seq*0.5+0.6, 0));
+  const wDn = makeMatrix(18, 12, C.wo, giMlp, 0, null); pos(wDn, X("mDn"),0,0); g.add(wDn); M.push(...wDn.children.filter(c=>c._mat));
+  { const my18 = matHalfY(18,1) + 1.0;   // 18-row matrix is taller → push labels further out
+    g.add(pos(label("down_proj", C.wo, 0.24), X("mDn"), my18, 0));
+    shp(X("mDn"), -my18, inter+" → "+h); }
+  const r2 = makeHead(C.res, seq, 0.9, 6, giMlp); pos(r2, X("res2"),0,0); g.add(r2); M.push(...r2.children);
+  g.add(pos(label("⊕ res②", C.res, 0.24), X("res2"), seq*0.5+0.6, 0));
+  const out = makeHead(0xb9c4d2, seq, 0.9, 6, giMlp); pos(out, X("out"),0,0); g.add(out); M.push(...out.children);
+  g.add(pos(label("block out", 0xb9c4d2, 0.24), X("out"), seq*0.5+0.6, 0));
+  g.add(arc(V(X("res1"),-seq*0.5-0.3,0), V(X("res2"),-seq*0.5-0.3,0), C.res, 0.5, -1.4));
+  return { span:X("out")-x0+1, attnMeshes:A.filter(Boolean), mlpMeshes:M.filter(Boolean) };
+}
+
+// register a group + push meshes to pickables (shared helper)
+function regGroup(gi, meshes, info, region, cx, cy){
+  meshes.forEach(m=>{ if(m.userData) m.userData.gi=gi; });
+  GROUPS.push({ info, meshes, region, cx, cy });
+  meshes.forEach(m=>pickables.push(m));
+}
+
+let sceneBB = null;
+function computeSceneBounds(){
+  sceneBB = new THREE.Box3().setFromObject(root);
+}
+
+// ============================================================
+//  interaction — click to inspect (highlight + describe)
+// ============================================================
+let selGi = -1;
+function setEmissive(meshes, v){ meshes.forEach(m=>{ if(m._mat) m._mat.emissiveIntensity = v; }); }
+function selectGroup(gi){
+  if(selGi>=0 && GROUPS[selGi]) setEmissive(GROUPS[selGi].meshes, null_or_base(selGi));
+  selGi = gi;
+  const grp = GROUPS[gi]; if(!grp) return;
+  setEmissive(grp.meshes, 0.9);
+  renderHUD(grp.info);
+}
+function null_or_base(gi){ return 0.14; }   // reset emissive to base
+function clearSelection(){
+  if(selGi>=0 && GROUPS[selGi]) setEmissive(GROUPS[selGi].meshes, 0.14);
+  selGi = -1; renderHUD(null);
+}
+
+// picking
+const ray = new THREE.Raycaster();
+let downXY = null, moved = false;
+canvas.addEventListener("pointerdown", e=>{ downXY=[e.clientX,e.clientY]; moved=false; });
+canvas.addEventListener("pointermove", e=>{ if(downXY && (Math.abs(e.clientX-downXY[0])+Math.abs(e.clientY-downXY[1])>6)) moved=true; });
+canvas.addEventListener("pointerup", e=>{
+  if(moved || !downXY){ downXY=null; return; }
+  downXY=null;
+  const r = canvas.getBoundingClientRect();
+  const ndc = new THREE.Vector2(((e.clientX-r.left)/r.width)*2-1, -((e.clientY-r.top)/r.height)*2+1);
+  ray.setFromCamera(ndc, camera);
+  const hits = ray.intersectObjects(pickables, false);
+  if(hits.length){
+    const gi = hits[0].object.userData.gi;
+    selectGroup(gi);
+    // clicking a run's placeholder strip flies to that run (which triggers LOD to build its detail)
+    const g = GROUPS[gi];
+    if(g && g.runStrip!=null){ const yy=runY(g.runStrip); flyToBox(FLOOR_X-6, yy-COL_PITCH, FLOOR_X+60, yy+COL_PITCH, 2); }
+  } else clearSelection();
+});
+
+// ---------- camera framing ----------
+let tween = null;
+function flyToBox(minx,miny,maxx,maxy, pad=2){
+  const cx=(minx+maxx)/2, cy=(miny+maxy)/2;
+  const radius = Math.max(maxx-minx, maxy-miny)/2 + pad;
+  const aspect = innerWidth/innerHeight, vFov = FOV*Math.PI/180;
+  const hFov = 2*Math.atan(Math.tan(vFov/2)*aspect);
+  const fit = Math.min(vFov, hFov);
+  const dist = (radius/Math.sin(fit/2)) * 1.02;
+  let dir = new THREE.Vector3().subVectors(camera.position, controls.target);
+  if(dir.length()<1e-3) dir.set(0.15,0.12,1);
+  dir.normalize();
+  const center = V(cx,cy,0);
+  tween = { t:0, dur:0.7, fromPos:camera.position.clone(), toPos:center.clone().addScaledVector(dir,dist),
+            fromTgt:controls.target.clone(), toTgt:center, dist, radius };
+}
+function frameWhole(){
+  const s = sceneBB || (sceneBB = new THREE.Box3().setFromObject(root));
+  flyToBox(s.min.x, s.min.y, s.max.x, s.max.y, 3);
+}
+function frameRegion(tag){
+  if(tag==="whole"){ frameWhole(); return; }
+  const r = REGION[tag]; if(!r){ frameWhole(); return; }
+  flyToBox(r.minx, r.miny, r.maxx, r.maxy, 2);
+}
+const smooth = t => t*t*(3-2*t);
+
+canvas.addEventListener("dblclick", ()=>{ clearSelection(); frameWhole(); });
+
+// ============================================================
+//  HUD / i18n
+// ============================================================
+const UI = {
+  zh:{ home:"首页", reset:"回到全景", jump:"跳转",
+       title:"MiMo-V2.5 · 模型结构 3D",
+       hint:"点击任意模块查看说明 · 拖拽旋转 · 滚轮缩放 · 双击空白回到全景" },
+  en:{ home:"Home", reset:"Fit all", jump:"Jump to",
+       title:"MiMo-V2.5 · Model Structure 3D",
+       hint:"Click any block for its notes · drag to rotate · scroll to zoom · double-click empty to fit all" },
+};
+const REGIONS = [
+  { v:"whole",  t:T("整机全景","Whole model") },
+  { v:"deploy", t:T("48 层主干展开","48-layer backbone") },
+  { v:"head",   t:T("输出头 lm_head","Output head") },
+  { v:"vit",    t:T("ViT 视觉","ViT vision") },
+  { v:"audio",  t:T("音频编码器","Audio encoder") },
+  { v:"mtp",    t:T("MTP 头","MTP head") },
+];
+const LEGEND = [
+  [C.global, T("全局注意力","global attn")], [C.swa, T("滑窗 SWA","SWA attn")],
+  [C.dense, T("Dense MLP","Dense MLP")], [C.moe, T("MoE 256e top-8","MoE 256e top-8")],
+  [C.vit, T("视觉 ViT","Vision ViT")], [C.audio, T("音频编码器","Audio enc")],
+  [C.mtp, T("MTP 草稿头","MTP head")], [C.io, T("嵌入 / 输出","embed / head")],
+  [GPU_COLS[0], T("GPU rank 颜色","GPU-rank colour")], [REPLICATE_COL, T("KV 复制","KV replica")],
+  [C.rs, T("reduce-scatter (融合 o_proj)","reduce-scatter (fused o_proj)")], [C.comm, T("EP all-to-all","EP all-to-all")],
+];
+const OVERVIEW = T(
+  "MiMo-V2.5 (310B 全模态 MoE) 完整结构一次性铺开:左侧音频编码器与 ViT 视觉编码器 (28 块,全局块 0/9/18/27) 各自投影到 4096,按占位符 token 直接合流进右侧主干的 layer 0;主干「8 卡部署」把 48 层按类型折叠成一列(连续同类型层合并为一段,标层号范围 + ⟳×N 循环次数;共 Dense×1、全局+MoE×8、SWA+MoE×39),列顶是输出头 model.norm→lm_head→logits,再往上是单块递归 MTP 草稿头(与主 lm_head 权重共享,虚线相连)。\n每一段里靠近相机会自动完整展开成 3D:单机 8 卡 --tp8 --dp2 --ep8 --enable-dp-attention —— 2 个 DP 组各 4 卡切注意力头(DP 组间 token 不相交),256 专家按 EP=8 分到 8 卡(每卡 32),attn→MoE 边界用 reduce-scatter(融合 o_proj)、专家用 all-to-all。用面板的 TP/DP/EP 下拉改并行度,几何实时重建。点击任意方块看说明、点击某段会飞过去并展开。",
+  "The full MiMo-V2.5 (310B omni-modal MoE) structure, all at once: on the left the audio encoder and ViT (28 blocks, full-attn at 0/9/18/27) project to 4096 and merge (at placeholder tokens) directly into layer 0 of the backbone on the right; the '8-GPU deployment' backbone folds the 48 layers into one column by type — consecutive same-type layers are merged into a single segment labelled with its layer range + ⟳×N repeat count (Dense×1, global+MoE×8, SWA+MoE×39). The output head model.norm→lm_head→logits sits at the top of the column, with the single-block recursive MTP draft head above it (sharing the lm_head weight, shown by a dashed link).\nWithin each segment, the part near the camera auto-expands fully into 3D: single-node --tp8 --dp2 --ep8 --enable-dp-attention — 2 DP groups of 4 GPUs split attention heads (tokens disjoint across DP groups), 256 experts sharded EP=8 across 8 GPUs (32/GPU), with reduce-scatter (fused o_proj) at the attn→MoE boundary and all-to-all for experts. Change TP/DP/EP in the panel and the geometry rebuilds live. Click any block for notes; click a segment to fly over and expand it."
+);
+
+function renderHUD(info){
+  const u = UI[LANG];
+  $("title").textContent = getModel(curModel).title[LANG];
+  $("tModel").textContent = LANG==="zh" ? "模型" : "Model";
+  if(info){
+    $("stepName").textContent = info.title[LANG];
+    $("stepDesc").textContent = info.desc[LANG];
+  } else {
+    $("stepName").textContent = T("整机结构总览","Whole-model overview")[LANG];
+    $("stepDesc").textContent = OVERVIEW[LANG];
+  }
+  $("hint").textContent = u.hint;
+  $("legend").innerHTML = LEGEND.map(([c,t])=>'<span><i style="background:'+hex6(c)+'"></i>'+t[LANG]+'</span>').join("");
+  $("tHome").textContent = u.home; $("btnReset").textContent = u.reset; $("tJump").textContent = u.jump;
+  $("tTP").textContent = "TP"; $("tDP").textContent = "DP"; $("tEP").textContent = "EP";
+  $("tDPAttn").textContent = LANG==="zh" ? "DP注意力" : "DP-attn";
+  $("btnLang").textContent = LANG==="zh" ? "EN" : "中文";
+  document.documentElement.lang = LANG;
+}
+function buildRegionSelect(){
+  const sel = $("selRegion"); sel.innerHTML = "";
+  REGIONS.forEach(r=>{ const o=document.createElement("option"); o.value=r.v; o.textContent=r.t[LANG]; sel.appendChild(o); });
+}
+function buildModelSelect(){
+  const sel = $("selModel"); sel.innerHTML = "";
+  MODELS.forEach(m=>{ const o=document.createElement("option"); o.value=m.id;
+    o.textContent = m.name[LANG] + (m.ready ? "" : (LANG==="zh"?"（敬请期待）":" (soon)"));
+    sel.appendChild(o); });
+  sel.value = curModel;
+}
+// show the 3D scene for a ready model, or a "coming soon" overlay for one without a config yet.
+function applyModel(){
+  const m = getModel(curModel), ready = m.ready;
+  $("soon").style.display = ready ? "none" : "flex";
+  document.querySelector(".panel").style.display = ready ? "" : "none";
+  $("gl").style.display = ready ? "block" : "none";
+  if(!ready){
+    $("soonTitle").textContent = m.name[LANG];
+    $("soonBody").textContent = (m.soon||T("结构建设中，敬请期待","Structure coming soon"))[LANG];
+  }
+  renderHUD(null);
+  // a not-ready model has no scene, so MiMo's legend / overview / hint would mislead — hide them.
+  ["stepName","stepDesc","legend","hint"].forEach(x=>{ $(x).style.display = ready ? "" : "none"; });
+}
+
+// ---------- wiring ----------
+$("btnReset").onclick = ()=>{ clearSelection(); $("selRegion").value = "whole"; frameWhole(); };
+$("selRegion").onchange = ()=> frameRegion($("selRegion").value);
+$("selModel").onchange = ()=>{ curModel = $("selModel").value; applyModel(); if(getModel(curModel).ready) rebuild(); };
+$("btnLang").onclick = ()=>{ LANG = LANG==="zh"?"en":"zh"; buildModelSelect(); applyModel(); rebuild(); };
+function syncCfg(){
+  cfg.tp = parseInt($("selTP").value,10);
+  cfg.dp = parseInt($("selDP").value,10);
+  cfg.ep = parseInt($("selEP").value,10);
+  cfg.dpAttn = $("chkDPAttn").checked;
+  rebuild();
+}
+$("selTP").onchange = syncCfg; $("selDP").onchange = syncCfg;
+$("selEP").onchange = syncCfg; $("chkDPAttn").onchange = syncCfg;
+
+// wipe and rebuild geometry (labels are baked sprites → rebuild for language / config change)
+function rebuild(){
+  const keepRegion = $("selRegion") ? $("selRegion").value : "whole";
+  // dispose any live per-run detail first (frees materials/label textures) before wiping root
+  for(let r=0;r<NR;r++) if(runDetail[r]) disposeRunDetail(r);
+  runDetail.fill(null); runStrip.fill(null); lodDirty = true;
+  while(root.children.length){ const c=root.children[0]; root.remove(c); }
+  GROUPS.length = 0; pickables.length = 0; for(const k in REGION) delete REGION[k];
+  root.add(conns); while(conns.children.length) conns.remove(conns.children[0]);
+  buildScene();
+  buildRegionSelect();
+  if($("selRegion") && [...$("selRegion").options].some(o=>o.value===keepRegion)) $("selRegion").value = keepRegion;
+  renderHUD(null);
+  selGi = -1;
+  frameRegion(keepRegion==="whole" ? "whole" : keepRegion);
+}
+
+function onResize(){
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+}
+addEventListener("resize", onResize);
+addEventListener("orientationchange", ()=> setTimeout(onResize, 300));
+
+// ---------- boot ----------
+const clock = new THREE.Clock();
+function animate(){
+  requestAnimationFrame(animate);
+  const dt = clock.getDelta();
+  if(tween){
+    tween.t += dt/tween.dur;
+    const e = smooth(Math.min(1, tween.t));
+    camera.position.lerpVectors(tween.fromPos, tween.toPos, e);
+    controls.target.lerpVectors(tween.fromTgt, tween.toTgt, e);
+    if(tween.t>=1) tween = null;
+  }
+  // keep near/far tracking the live camera distance so pinch-zoom (mobile) never clips blocks.
+  // driven by actual distance to target, not a frozen tween value.
+  {
+    const dist = camera.position.distanceTo(controls.target);
+    const span = sceneBB ? sceneBB.getSize(new THREE.Vector3()).length() : 200;
+    camera.near = Math.max(0.05, dist - span);
+    camera.far  = dist + span * 1.5;
+    camera.updateProjectionMatrix();
+  }
+  controls.update();
+  // LOD: build/dispose per-layer deploy detail near the camera focus. Throttled + dirty-flagged
+  // so we don't rebuild every frame; skipped while a camera tween is flying (handled in updateLOD).
+  lodTick = (lodTick+1) % 6;
+  if(lodDirty || lodTick===0){ lodDirty=false; updateLOD(); }
+  renderer.render(scene, camera);
+  renderGizmo();
+}
+
+onResize();
+buildScene();
+buildRegionSelect();
+buildModelSelect();
+applyModel();
+camera.position.set(90, 34, 150);
+controls.target.set(86, 28, 0);
+renderHUD(null);
+frameWhole();
+animate();
+
+// expose for headless harness
+globalThis.__api = { GROUPS, pickables, camera, controls, selectGroup, clearSelection, frameRegion, frameWhole,
+  isGlobal, isMoE, VIT_FULL, GLOBALS, REGION, cfg, rebuild, buildScene,
+  RUNS, CYCLES, NR, runDetail, runStrip, runY, buildRunDetail, disposeRunDetail, updateLOD, markLodDirty,
+  aliveDetail: ()=>runDetail.reduce((n,d)=>n+(d?1:0),0),
+  get selGi(){ return selGi; } };
+</script>
+</body>
+</html>

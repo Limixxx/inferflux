@@ -148,6 +148,20 @@ const CARDS = [
     ],
   },
   {
+    href: "model-structure-3d.html", icon: "\u{1F3D7}\u{FE0F}",
+    title: { zh: "模型结构 3D", en: "Model Structure 3D" },
+    sub: {
+      zh: "可交互探索大模型的完整结构，首发 MiMo-V2.5（310B 全模态 MoE，对齐 SGLang 源码）：48 层混合注意力主干（9 全局 + 39 滑窗 SWA）以层塔呈现，除第 0 层 Dense 外全为 256 专家 top-8 MoE，含单块递归 MTP（nextn）草稿头、28 层 ViT 与音频编码器（投影到 4096 后按占位符 token 合流）。最右侧「8 卡部署展开」把不同种类的层完整展开成 3D —— 单机 8 卡 tp8·dp2·ep8·DP-attention：2 个 DP 组各 4 卡切注意力头、256 专家 EP=8 分卡（32/卡）、attn→MoE 用 reduce-scatter（融合 o_proj）、专家用 all-to-all；面板可改 TP/DP/EP 实时重建。可鼠标旋转缩放。",
+      en: "Interactively explore the full structure of large models, starting with MiMo-V2.5 (310B omni-modal MoE, faithful to SGLang source): the 48-layer hybrid-attention backbone (9 global + 39 sliding-window SWA) as a layer tower, MoE (256 experts, top-8) on every layer except the Dense layer 0, plus the single-block recursive MTP (nextn) draft head, a 28-layer ViT and an audio encoder (both projected to 4096 and merged at placeholder tokens). The rightmost '8-GPU deployment' section fully expands the distinct layer types in 3D — single-node tp8·dp2·ep8·DP-attention: 2 DP groups of 4 GPUs split attention heads, 256 experts sharded EP=8 (32/GPU), reduce-scatter (fused o_proj) at the attn→MoE boundary and all-to-all for experts; change TP/DP/EP in the panel to rebuild live. Drag to rotate, scroll to zoom.",
+    },
+    tags: [
+      { zh: "MiMo-V2.5", en: "MiMo-V2.5", accent: true },
+      { zh: "混合注意力 / MoE / MTP", en: "Hybrid Attn / MoE / MTP" },
+      { zh: "TP / DP / EP", en: "TP / DP / EP", accent: true },
+      { zh: "3D", en: "3D", accent: true },
+    ],
+  },
+  {
     href: "collective-3d.html", icon: "\u{1F310}",
     title: { zh: "GPU 集合通信 3D 动画", en: "GPU Collective Communication 3D" },
     sub: {
