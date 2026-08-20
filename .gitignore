@@ -15,6 +15,7 @@ ntr.py
 
 server/dist/
 server/node_modules/
+server/.npm-cache/
 .worktree/
 .issue/
 .pi/
