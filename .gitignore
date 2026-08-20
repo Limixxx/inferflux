@@ -13,5 +13,5 @@ server/cert.pem
 sglang_*.py
 ntr.py
 
-./server/dist
-./server/node_modules
+server/dist/
+server/node_modules/

@@ -1,0 +1,11 @@
+export const TICK = 5;                 // ms of sim time per engine tick
+export const RING_MAX = 4096;          // completed-request ring for percentiles
+export const SERIES_LEN = 300;         // 300 × 1s buckets for sparklines
+export const BUCKET_MS = 1000;
+export const NTR_MAX = 1.0;
+export const NTR_CLIP = 4096;
+export const NTR_DECAY_STEPS = 600;
+export const HANDSHAKE_RTT_MS = 2;
+export const PERREQ_REF_CTX = 4096;
+export const SERIES_KEYS = ["ttft","tpot","e2e","rps","tps","pQueue","dQueue","running","kvP","kvD","kvDpre","dHandshake","link","inflight"] as const;
+export const BD_KEYS = ["tokenize","bootstrap","pQueue","prefill","transfer","dQueue","detok"] as const;
