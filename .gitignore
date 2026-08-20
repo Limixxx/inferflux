@@ -15,3 +15,6 @@ ntr.py
 
 server/dist/
 server/node_modules/
+.worktree/
+.issue/
+.pi/
