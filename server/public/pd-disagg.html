@@ -131,6 +131,11 @@ select{background:var(--panel2); border:1px solid var(--border); border-radius:6
     <button class="preset" data-preset="transferBound"></button>
     <button class="preset" data-preset="prefillBound"></button>
     <button class="preset" data-preset="decodeSaturated"></button>
+    <span style="color:var(--border);">|</span>
+    <button class="preset" data-preset="aggBalanced"></button>
+    <button class="preset" data-preset="aggChunkedPrefill"></button>
+    <button class="preset" data-preset="aggDecodeHeavy"></button>
+    <button class="preset" data-preset="aggHighQps"></button>
   </div>
   <div class="sep"></div>
   <button id="btnLang">EN</button>
@@ -165,22 +170,29 @@ const DICT = {
     "ctl.speed":"倍速","ctl.presets":"场景:",
     "preset.balanced":"均衡","preset.transferBound":"传输瓶颈",
     "preset.prefillBound":"Prefill 瓶颈","preset.decodeSaturated":"Decode 饱和",
+    "preset.aggBalanced":"聚合-均衡","preset.aggChunkedPrefill":"聚合-分块Prefill",
+    "preset.aggDecodeHeavy":"聚合-Decode密集","preset.aggHighQps":"聚合-高QPS",
+    "ctl.mode":"模式:",
     "g.workload":"负载","g.topology":"拓扑","g.latency":"延时","g.compute":"计算","g.kv":"KV Cache / 传输",
+    "p.mode":"部署模式","mode.pd-disagg":"PD 分离","mode.agg":"聚合",
     "p.qps":"QPS","p.arrivalDist":"到达模式","arrival.poisson":"泊松（随机）","arrival.uniform":"均匀（等间隔）",
     "p.inputLenMean":"输入长度均值 (tokens)","p.inputDist":"输入长度分布",
     "p.outputLenMean":"输出长度均值 (tokens)","p.outputDist":"输出长度分布",
     "p.cacheHitRate":"Prefix Cache 命中率",
     "p.numP":"Prefill 实例数","p.numD":"Decode 实例数",
+    "p.numWorkers":"Worker 实例数",
     "p.lbPolicyP":"Prefill 负载均衡策略","p.lbPolicyD":"Decode 负载均衡策略",
     "lb.least":"最小负载","lb.round_robin":"轮询","lb.power_of_two":"二选一取低 (P2C)","lb.random":"随机",
     "p.tokenizeUsPerTok":"Tokenizer 延时 (µs/token)",
     "p.transferOverheadMs":"每次传输固定开销 (ms)","p.detokenizeMs":"Detokenizer 延时 (ms)",
     "p.prefillTokPerSec":"Prefill 速度 (tok/s/实例)","p.chunkSize":"Chunked Prefill 大小",
+    "p.chunkedPrefill":"分块 Prefill","prefill.on":"开启","prefill.off":"关闭",
     "p.decodeMsBase":"Decode 步基础延时 (ms)","p.decodeMsPerReq":"Decode 每请求增量 (ms/req)",
     "p.maxRunning":"最大并行请求数 (每 D 实例)",
     "p.newTokenRatio":"new_token_ratio 准入预留系数（下限）",
     "p.modelPreset":"模型（决定 KV cell size）","p.gpu":"显卡（决定 KV 显存）",
     "p.kvGbP":"P 实例 KV 显存 (GB)","p.kvGbD":"D 实例 KV 显存 (GB)",
+    "p.kvGb":"KV 显存 (GB)",
     "p.bandwidthGBs":"KV 传输带宽 (GB/s/链路)",
     "dist.fixed":"固定","dist.uniform":"均匀 (±50%)","dist.lognormal":"对数正态",
     "model.mimo_v25":"MiMo-V2.5 (混合注意力)","model.mimo_v25_pro":"MiMo-V2.5-Pro (混合注意力)",
@@ -191,22 +203,23 @@ const DICT = {
     "p.layers":"层数","p.kvHeads":"KV heads","p.headDim":"head_dim","p.dtypeBytes":"dtype 字节数",
     "p.swaWindow":"SWA 窗口 (0=关)",
     "info.cell":"KV cell size","info.perTok":"/token","info.cap":"每实例容量",
-    "info.capP":"P 容量","info.capD":"D 容量","info.tokens":"tokens","info.fullAttn":"全注意力层",
+    "info.capP":"P 容量","info.capD":"D 容量","info.capW":"Worker 容量","info.tokens":"tokens","info.fullAttn":"全注意力层",
     "bd.title":"TTFT 分解（最近 ~10s 窗口均值）— 拖动参数观察瓶颈迁移",
     "bd.tokenize":"Tokenize","bd.bootstrap":"Bootstrap 握手","bd.pQueue":"P 排队",
     "bd.prefill":"Prefill 计算","bd.transfer":"KV 传输","bd.dQueue":"D 排队（传输后→running）",
-    "bd.detok":"Detok/响应",
+    "bd.detok":"Detok/响应","bd.queue":"排队",
     "m.ttft":"TTFT 首token延时","m.tpot":"TPOT 每token延时","m.e2e":"端到端延时",
     "m.rps":"完成吞吐","m.tps":"Token 吞吐","m.queue":"排队深度 (P等待/D等待)",
     "m.running":"Decode 并行数","m.kvP":"KV 利用率 (P)","m.kvD":"KV 利用率 (D)",
     "m.kvDpre":"预分配 KV 占用 (D)","m.kvDpre.sub":"其中预分配",
     "m.dHandshake":"D 握手延时","m.link":"传输链路利用率",
-    "m.inflight":"在途请求数",
+    "m.inflight":"在途请求数","m.wQueue":"Worker 排队","m.kvW":"KV 利用率 (Worker)",
     "n.client":"Client","n.router":"Router",
-    "n.prefill":"Prefill","n.decode":"Decode","inst.pipeline":"Tok→Sched→Detok",
+    "n.prefill":"Prefill","n.decode":"Decode","n.worker":"Worker","inst.pipeline":"Tok→Sched→Detok",
     "q.tok":"tokenize","q.bootstrap":"bootstrap","q.waiting":"waiting",
     "q.prefilling":"prefill","q.inflight":"inflight",
     "q.prealloc":"prealloc","q.transfer":"transfer","q.running":"running","q.retract":"retracted",
+    "s.w_waiting":"等待中","s.w_prefill":"Prefill","s.w_chunked_prefill":"分块 Prefill","s.w_decode":"Decode",
     "lg.Bootstrapping":"Bootstrapping 握手中","lg.WaitingForInput":"排队/等待",
     "lg.Transferring":"KV 传输中","lg.Success":"传输完成","lg.decoding":"Decoding","lg.tokenize":"Tokenize/Detok",
     "lg.retract":"抢占重算",
@@ -217,22 +230,29 @@ const DICT = {
     "ctl.speed":"Speed","ctl.presets":"Presets:",
     "preset.balanced":"Balanced","preset.transferBound":"Transfer-bound",
     "preset.prefillBound":"Prefill-bound","preset.decodeSaturated":"Decode-saturated",
+    "preset.aggBalanced":"Agg-Balanced","preset.aggChunkedPrefill":"Agg-Chunked-Prefill",
+    "preset.aggDecodeHeavy":"Agg-Decode-Heavy","preset.aggHighQps":"Agg-High-QPS",
+    "ctl.mode":"Mode:",
     "g.workload":"Workload","g.topology":"Topology","g.latency":"Latencies","g.compute":"Compute","g.kv":"KV Cache / Transfer",
+    "p.mode":"Deploy mode","mode.pd-disagg":"PD Disaggregated","mode.agg":"Aggregated",
     "p.qps":"QPS","p.arrivalDist":"Arrival pattern","arrival.poisson":"Poisson (bursty)","arrival.uniform":"Uniform (even)",
     "p.inputLenMean":"Input length mean (tokens)","p.inputDist":"Input length dist",
     "p.outputLenMean":"Output length mean (tokens)","p.outputDist":"Output length dist",
     "p.cacheHitRate":"Prefix cache hit rate",
     "p.numP":"# Prefill instances","p.numD":"# Decode instances",
+    "p.numWorkers":"# Worker instances",
     "p.lbPolicyP":"Prefill LB policy","p.lbPolicyD":"Decode LB policy",
     "lb.least":"Least load","lb.round_robin":"Round-robin","lb.power_of_two":"Power-of-two","lb.random":"Random",
     "p.tokenizeUsPerTok":"Tokenizer latency (µs/token)",
     "p.transferOverheadMs":"Per-transfer overhead (ms)","p.detokenizeMs":"Detokenizer latency (ms)",
     "p.prefillTokPerSec":"Prefill speed (tok/s/inst)","p.chunkSize":"Chunked prefill size",
+    "p.chunkedPrefill":"Chunked Prefill","prefill.on":"Enabled","prefill.off":"Disabled",
     "p.decodeMsBase":"Decode step base (ms)","p.decodeMsPerReq":"Decode per-req coef (ms/req)",
     "p.maxRunning":"Max running reqs (per D)",
     "p.newTokenRatio":"new_token_ratio (admission reserve floor)",
     "p.modelPreset":"Model (sets KV cell size)","p.gpu":"GPU (sets KV memory)",
     "p.kvGbP":"KV memory per P (GB)","p.kvGbD":"KV memory per D (GB)",
+    "p.kvGb":"KV memory (GB)",
     "p.bandwidthGBs":"KV transfer bandwidth (GB/s/link)",
     "dist.fixed":"Fixed","dist.uniform":"Uniform (±50%)","dist.lognormal":"Lognormal",
     "model.mimo_v25":"MiMo-V2.5 (hybrid attn)","model.mimo_v25_pro":"MiMo-V2.5-Pro (hybrid attn)",
@@ -243,22 +263,23 @@ const DICT = {
     "p.layers":"Layers","p.kvHeads":"KV heads","p.headDim":"head_dim","p.dtypeBytes":"dtype bytes",
     "p.swaWindow":"SWA window (0=off)",
     "info.cell":"KV cell size","info.perTok":"/token","info.cap":"capacity per instance",
-    "info.capP":"P capacity","info.capD":"D capacity","info.tokens":"tokens","info.fullAttn":"full-attn layers",
+    "info.capP":"P capacity","info.capD":"D capacity","info.capW":"Worker capacity","info.tokens":"tokens","info.fullAttn":"full-attn layers",
     "bd.title":"TTFT breakdown (mean over recent ~10s window) — drag any slider to watch the bottleneck move",
     "bd.tokenize":"Tokenize","bd.bootstrap":"Bootstrap","bd.pQueue":"P queue",
     "bd.prefill":"Prefill compute","bd.transfer":"KV transfer","bd.dQueue":"D queue (post-transfer→running)",
-    "bd.detok":"Detok/response",
+    "bd.detok":"Detok/response","bd.queue":"Queue",
     "m.ttft":"TTFT","m.tpot":"TPOT","m.e2e":"E2E latency",
     "m.rps":"Request throughput","m.tps":"Token throughput","m.queue":"Queue depth (P wait / D wait)",
     "m.running":"Decode running","m.kvP":"KV util (P)","m.kvD":"KV util (D)",
     "m.kvDpre":"Prealloc KV (D)","m.kvDpre.sub":"of which prealloc",
     "m.dHandshake":"D handshake latency","m.link":"Transfer link util",
-    "m.inflight":"In-flight requests",
+    "m.inflight":"In-flight requests","m.wQueue":"Worker queue","m.kvW":"KV util (Worker)",
     "n.client":"Client","n.router":"Router",
-    "n.prefill":"Prefill","n.decode":"Decode","inst.pipeline":"Tok→Sched→Detok",
+    "n.prefill":"Prefill","n.decode":"Decode","n.worker":"Worker","inst.pipeline":"Tok→Sched→Detok",
     "q.tok":"tokenize","q.bootstrap":"bootstrap","q.waiting":"waiting",
     "q.prefilling":"prefill","q.inflight":"inflight",
     "q.prealloc":"prealloc","q.transfer":"transfer","q.running":"running","q.retract":"retracted",
+    "s.w_waiting":"Waiting","s.w_prefill":"Prefill","s.w_chunked_prefill":"Chunked Prefill","s.w_decode":"Decode",
     "lg.Bootstrapping":"Bootstrapping","lg.WaitingForInput":"Queued/Waiting",
     "lg.Transferring":"KV transferring","lg.Success":"Transfer done","lg.decoding":"Decoding","lg.tokenize":"Tokenize/Detok",
     "lg.retract":"Retract/recompute",
@@ -297,6 +318,8 @@ const DEFAULTS = {
   layers:48, fullLayers:9, kvHeads:4, headDim:192, dtypeBytes:2, hybrid:true,
   mla:false, kvLoraRank:512, qkRope:64, qHeads:32, swaWindow:128,
   kvGbP:99, kvGbD:99, bandwidthGBs:50,
+  /* agg-mode defaults (backward-compatible: mode defaults to pd-disagg) */
+  mode:"pd-disagg", numWorkers:2, kvGb:99, chunkedPrefill:false,
 };
 const PRESETS = {
   balanced: {...DEFAULTS},
@@ -308,6 +331,13 @@ const PRESETS = {
                  prefillTokPerSec:8000, numP:1, numD:2, bandwidthGBs:40},
   decodeSaturated: {...DEFAULTS, qps:10, inputLenMean:512, outputLenMean:1024,
                     maxRunning:24, numP:2, numD:1, decodeMsPerReq:0.4},
+  /* agg-mode presets */
+  aggBalanced: {...DEFAULTS, mode:"agg", numWorkers:2, kvGb:99, chunkedPrefill:false},
+  aggChunkedPrefill: {...DEFAULTS, mode:"agg", numWorkers:2, kvGb:99,
+                      chunkedPrefill:true, chunkSize:8192, inputLenMean:8192},
+  aggDecodeHeavy: {...DEFAULTS, mode:"agg", numWorkers:1, kvGb:141,
+                   outputLenMean:1024, chunkedPrefill:false},
+  aggHighQps: {...DEFAULTS, mode:"agg", numWorkers:4, kvGb:99, qps:16, chunkedPrefill:false},
 };
 function fmtTokens(v){ if (v >= 1e6) return (v / 1e6).toFixed(v % 1e6 === 0 ? 0 : 2) + "M"; if (v >= 1e3) return (v / 1e3).toFixed(v % 1e3 === 0 ? 0 : 1) + "k"; return v.toFixed(0); }
 function gpuKvBudget(hbm){ return Math.round(hbm * 0.7); }
@@ -326,8 +356,10 @@ const PARAM_DEFS = [
   {group:"workload", key:"outputLenMean", min:4, max:32768, log:true, fmt:v=>fmtTokens(v)},
   {group:"workload", key:"outputDist", type:"select", options:["fixed","uniform","lognormal"], i18nPrefix:"dist."},
   {group:"workload", key:"cacheHitRate", min:0, max:1, step:0.01, fmt:v=>(v*100).toFixed(0)+"%"},
+  {group:"topology", key:"mode", type:"select", options:["pd-disagg","agg"], i18nPrefix:"mode."},
   {group:"topology", key:"numP", min:1, max:8, step:1, fmt:v=>v.toFixed(0)},
   {group:"topology", key:"numD", min:1, max:8, step:1, fmt:v=>v.toFixed(0)},
+  {group:"topology", key:"numWorkers", min:1, max:8, step:1, fmt:v=>v.toFixed(0)},
   {group:"topology", key:"lbPolicyP", type:"select", options:["least","round_robin","power_of_two","random"], i18nPrefix:"lb."},
   {group:"topology", key:"lbPolicyD", type:"select", options:["least","round_robin","power_of_two","random"], i18nPrefix:"lb."},
   {group:"latency", key:"tokenizeUsPerTok", min:0, max:50, step:0.5, fmt:v=>v.toFixed(1)},
@@ -335,6 +367,7 @@ const PARAM_DEFS = [
   {group:"latency", key:"detokenizeMs", min:0, max:50, step:0.5, fmt:v=>v.toFixed(1)},
   {group:"compute", key:"prefillTokPerSec", min:1000, max:100000, step:500, fmt:v=>(v/1000).toFixed(1)+"k"},
   {group:"compute", key:"chunkSize", steps:[1024,2048,4096,8192,16384,32768,65536], fmt:v=>fmtTokens(v)},
+  {group:"compute", key:"chunkedPrefill", type:"toggle", i18nPrefix:"prefill."},
   {group:"compute", key:"decodeMsBase", min:5, max:200, step:1, fmt:v=>v.toFixed(0)},
   {group:"compute", key:"decodeMsPerReq", min:0, max:2, step:0.05, fmt:v=>v.toFixed(2)},
   {group:"compute", key:"maxRunning", min:1, max:512, step:1, fmt:v=>v.toFixed(0)},
@@ -348,6 +381,7 @@ const PARAM_DEFS = [
   {group:"kv", key:"gpu", type:"select", options:["a100_80g","h100","h200","b200","b300","mi300x","custom"], i18nPrefix:"gpu."},
   {group:"kv", key:"kvGbP", min:1, max:288, step:1, fmt:v=>v.toFixed(0)},
   {group:"kv", key:"kvGbD", min:1, max:288, step:1, fmt:v=>v.toFixed(0)},
+  {group:"kv", key:"kvGb", min:1, max:288, step:1, fmt:v=>v.toFixed(0)},
   {group:"kv", key:"bandwidthGBs", min:0.25, max:200, step:0.25, fmt:v=>v.toFixed(2)},
 ];
 function cellSizeOf(P){
@@ -377,13 +411,31 @@ async function apiCommand(action, dt){ return apiPost("/api/command", {action, d
 
 const sim = {
   now:0, P:Object.assign({}, DEFAULTS),
-  pList:[], dList:[], allActive:new Set(), responding:[],
+  pList:[], dList:[], wList:[], allActive:new Set(), responding:[],
   retractTotal:0,
   metrics:{ snapshot:()=>null, latestSeries:()=>[], recentBreakdown:()=>new Array(7).fill(0), series:{}, seriesHead:0, seriesCount:0 },
 };
 
 function applyRenderState(data){
   sim.now = data.now; sim.P = data.P; sim.retractTotal = data.retractTotal;
+  const isAgg = (data.mode === "agg") || (sim.P.mode === "agg");
+  if (isAgg){
+    sim.pList = []; sim.dList = [];
+    sim.wList = data.wList.map(w=>({
+      id:w.id, kvUsed:w.kvUsed, draining:w.draining, maxTokens:()=>w.maxTokens,
+      ntr:w.ntr, retractGlow:w.retractGlow, nextStepAt:w.nextStepAt,
+      waitingQ:[], running:[],
+    }));
+    const fixReq = r => { r.w = r.wIdx >= 0 ? sim.wList[r.wIdx] : null; r.p = null; r.d = null; return r; };
+    for (let i=0; i<sim.wList.length; i++){
+      const w=sim.wList[i], wd=data.wList[i];
+      w.waitingQ=wd.waitingQ.map(fixReq); w.running=wd.running.map(fixReq);
+    }
+    sim.allActive=new Set(data.allActive.map(fixReq));
+    sim.responding=data.responding.map(fixReq);
+    return;
+  }
+  sim.wList = [];
   sim.pList = data.pList.map(p=>({
     id:p.id, kvUsed:p.kvUsed, draining:p.draining, maxTokens:()=>p.maxTokens,
     bootstrapQ:[], waitingQ:[], slots:[], inflight:[],
@@ -445,7 +497,7 @@ class Renderer {
   constructor(cv){ this.cv = cv; this.ctx = cv.getContext("2d"); this.W = 0; this.H = 0; }
   resize(sim){
     const w = this.cv.parentElement.clientWidth || 800;
-    const n = Math.max(sim.pList.length, sim.dList.length);
+    const n = sim.P.mode === "agg" ? sim.wList.length : Math.max(sim.pList.length, sim.dList.length);
     const h = Math.max(420, n * (BOX_H + BOX_GAP) - BOX_GAP + 70);
     const dpr = window.devicePixelRatio || 1;
     const pw = Math.round(w * dpr), ph = Math.round(h * dpr);
@@ -453,6 +505,7 @@ class Renderer {
     this.W = w; this.H = h; this.dpr = dpr;
   }
   draw(sim){
+    if (sim.P.mode === "agg") { this.drawAgg(sim); return; }
     const ctx = this.ctx, W = this.W, H = this.H, now = sim.now;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.clearRect(0, 0, W, H);
@@ -589,6 +642,147 @@ class Renderer {
       ctx.fillText(label, lx + 8, 17);
       lx += 16 + ctx.measureText(label).width + 10;
     }
+  }
+
+  /* ===================== agg-mode renderer ========================= */
+  drawAgg(sim){
+    const ctx = this.ctx, W = this.W, H = this.H, now = sim.now;
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    ctx.font = "10px sans-serif";
+    const midY = H / 2;
+    const nodeH = 46;
+    const nd = (fx, fw, name) => ({ x: fx * W, y: midY - nodeH / 2, w: fw * W, h: nodeH, name });
+    const client = nd(.015, .065, t("n.client"));
+    const router = nd(.125, .075, t("n.router"));
+    const areaT = 30, areaB = H - 40;
+    const boxW = Math.max(W * .30, 180);
+    const wX = Math.min(Math.max(W * .45, router.x + router.w + 40), W - 16 - boxW);
+    const n = sim.wList.length;
+    const totH = n * BOX_H + (n - 1) * BOX_GAP;
+    const y0 = areaT + Math.max(0, (areaB - areaT - totH) / 2);
+    const wRects = sim.wList.map((_, i) => ({ x: wX, y: y0 + i * (BOX_H + BOX_GAP), w: boxW, h: BOX_H }));
+
+    ctx.lineWidth = 1; ctx.strokeStyle = "#2d3646";
+    ctx.beginPath(); ctx.moveTo(client.x + client.w, midY); ctx.lineTo(router.x, midY); ctx.stroke();
+    const curve = (x1, y1, x2, y2, style, width) => {
+      ctx.strokeStyle = style || "#2d3646"; ctx.lineWidth = width || 1;
+      ctx.beginPath(); ctx.moveTo(x1, y1);
+      const mx = (x1 + x2) / 2;
+      ctx.bezierCurveTo(mx, y1, mx, y2, x2, y2);
+      ctx.stroke();
+    };
+    ctx.globalAlpha = 0.7;
+    for (const wr of wRects) curve(router.x + router.w, midY, wr.x, wr.y + wr.h / 2, "#3fb950", 1.3);
+    ctx.globalAlpha = 1;
+
+    const boxBottom = wRects.length ? wRects[wRects.length - 1].y + BOX_H : midY;
+    const respY = Math.min(H - 10, boxBottom + 40);
+    const routerCx = router.x + router.w / 2;
+    const respPath = wr => [
+      { x: wr.x + wr.w / 2, y: wr.y + wr.h },
+      { x: wr.x + wr.w / 2, y: respY },
+      { x: routerCx, y: respY },
+      { x: routerCx, y: router.y + router.h },
+    ];
+    ctx.strokeStyle = "#3d4a5e"; ctx.setLineDash([5, 4]); ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    for (const wr of wRects){ const pts = respPath(wr); ctx.moveTo(pts[0].x, pts[0].y); for (let k = 1; k < pts.length; k++) ctx.lineTo(pts[k].x, pts[k].y); }
+    ctx.stroke();
+    const relayY = midY + 12;
+    ctx.beginPath(); ctx.moveTo(router.x, relayY); ctx.lineTo(client.x + client.w, relayY);
+    ctx.stroke(); ctx.setLineDash([]);
+    this._respPath = respPath; this._respY = respY; this._routerCx = routerCx; this._relayY = relayY;
+
+    const drawNode = (r) => {
+      this.rr(r.x, r.y, r.w, r.h, 8);
+      ctx.fillStyle = "#1c2330"; ctx.fill();
+      ctx.strokeStyle = "#2d3646"; ctx.lineWidth = 1; ctx.stroke();
+      ctx.fillStyle = "#e6edf3"; ctx.textAlign = "center"; ctx.font = "11px sans-serif";
+      ctx.fillText(r.name, r.x + r.w / 2, r.y + r.h / 2 + 4);
+      ctx.textAlign = "left";
+    };
+    drawNode(client); drawNode(router);
+
+    const bezPoint = (x1, y1, x2, y2, tt) => { const mx = (x1 + x2) / 2, u = 1 - tt; return { x: u*u*u*x1 + 3*u*u*tt*mx + 3*u*tt*tt*mx + tt*tt*tt*x2, y: u*u*u*y1 + 3*u*u*tt*y1 + 3*u*tt*tt*y2 + tt*tt*tt*y2 }; };
+    for (const r of sim.allActive){
+      const age = now - r.stamps.recv;
+      if (age < 0) continue;
+      if (age <= CLIENT_VIS_MS){
+        const prog = age / CLIENT_VIS_MS;
+        const x = client.x + client.w + (router.x - client.x - client.w) * prog;
+        this.dot(x, midY, 4, COLORS.tokenize);
+      } else if (age <= CLIENT_VIS_MS + FANOUT_VIS_MS){
+        const prog = (age - CLIENT_VIS_MS) / FANOUT_VIS_MS;
+        const wi = sim.wList.indexOf(r.w);
+        if (wi >= 0){ const wr = wRects[wi], pt = bezPoint(router.x + router.w, midY, wr.x, wr.y + wr.h / 2, prog); this.dot(pt.x, pt.y, 3.5, "#3fb950"); }
+      }
+    }
+
+    for (const r of sim.responding){
+      const wi = sim.wList.indexOf(r.w);
+      if (wi < 0) continue;
+      const wr = wRects[wi];
+      const dToRouter = this._respPath(wr);
+      const routerToClient = [
+        { x: this._routerCx, y: router.y + router.h },
+        { x: router.x, y: this._relayY },
+        { x: client.x + client.w, y: this._relayY },
+      ];
+      const pts = dToRouter.concat(routerToClient);
+      const prog = clamp(1 - (r.readyAt - now) / Math.max(1, sim.P.detokenizeMs), 0, 1);
+      const pt = this.pathPoint(pts, prog);
+      this.dot(pt.x, pt.y, 4, COLORS.tokenize);
+    }
+
+    for (let i = 0; i < sim.wList.length; i++) this.drawWorker(sim, sim.wList[i], wRects[i], i, now);
+
+    const legend = [
+      ["tokenize", COLORS.tokenize], ["w_waiting", COLORS.WaitingForInput],
+      ["w_prefill", "#f0883e"], ["w_chunked_prefill", "#bc8cff"],
+      ["w_decode", COLORS.decoding], ["retract", COLORS.retract],
+    ];
+    let lx = 12;
+    ctx.font = "10px sans-serif";
+    for (const [k, c] of legend){
+      this.dot(lx, 14, 4, c);
+      ctx.fillStyle = "#8b98a9";
+      const label = t("s." + k);
+      ctx.fillText(label, lx + 8, 17);
+      lx += 16 + ctx.measureText(label).width + 10;
+    }
+  }
+
+  drawWorker(sim, w, r, idx, now){
+    const ctx = this.ctx, P = sim.P;
+    this.instanceFrame(r, t("n.worker") + " " + w.id + (w.draining ? " \u23f3" : ""));
+    if (now - w.retractGlow < 500){
+      const a = 1 - (now - w.retractGlow) / 500;
+      this.rr(r.x, r.y, r.w, r.h, 8);
+      ctx.strokeStyle = "rgba(248,81,73," + (0.2 + 0.6 * a).toFixed(2) + ")";
+      ctx.lineWidth = 2; ctx.stroke(); ctx.lineWidth = 1;
+    }
+    ctx.fillStyle = "#5a6675"; ctx.font = "8px sans-serif";
+    const ntrTxt = "ntr " + (w.ntr || 0).toFixed(2);
+    ctx.fillText(ntrTxt, r.x + r.w - 8 - ctx.measureText(ntrTxt).width, r.y + 27);
+    ctx.font = "10px sans-serif";
+    let y = r.y + 26;
+    const nRetract = w.waitingQ.reduce((s, q) => s + (q.retracted ? 1 : 0), 0);
+    this.queueRow(r, y, "q.waiting", w.waitingQ.length, COLORS.WaitingForInput); y += 15;
+    if (nRetract > 0){ ctx.fillStyle = COLORS.retract; ctx.font = "9px sans-serif"; const rt = "\u27f2" + nRetract; ctx.fillText(rt, r.x + r.w - 8 - ctx.measureText(rt).width, y - 7); ctx.font = "10px sans-serif"; }
+    y += 15;
+    // running batch: mixed w_prefill / w_chunked_prefill / w_decode
+    const nP = w.running.reduce((s,q)=>s+(q.stage==="w_prefill"?1:0),0);
+    const nCP = w.running.reduce((s,q)=>s+(q.stage==="w_chunked_prefill"?1:0),0);
+    const nD = w.running.reduce((s,q)=>s+(q.stage==="w_decode"?1:0),0);
+    ctx.fillStyle = "#8b98a9";
+    ctx.fillText(t("q.running"), r.x + 8, y + 8);
+    let dx = r.x + 66;
+    const dotRun = (cnt, color) => { const maxDots = Math.floor((r.w - 110) / 7); const m = Math.min(cnt, maxDots); for (let i = 0; i < m; i++) this.dot(dx + i * 7, y + 5, 2.5, color); dx += m * 7 + 4; };
+    dotRun(nP, "#f0883e"); dotRun(nCP, "#bc8cff"); dotRun(nD, COLORS.decoding);
+    ctx.fillStyle = COLORS.decoding;
+    ctx.fillText(w.running.length + "/" + P.maxRunning, r.x + r.w - 44, y + 8);
+    this.kvGauge(r, w.kvUsed, w.maxTokens(P));
   }
 
   drawPrefill(sim, p, r, idx, now){
@@ -750,10 +944,12 @@ function drawBreakdown(cv, bd){
   const total = bd.reduce((a, b) => a + Math.max(0, b), 0) || 1;
   let x = 0;
   const barY = 6, barH = 24;
-  const BD_KEYS = ["tokenize","bootstrap","pQueue","prefill","transfer","dQueue","detok"];
+  const isAgg = sim.P.mode === "agg";
+  const BD_KEYS = isAgg ? ["tokenize","queue","prefill","detok"] : ["tokenize","bootstrap","pQueue","prefill","transfer","dQueue","detok"];
+  const BD_COLORS = isAgg ? ["#39c5cf","#7d8590","#f0883e","#3fb950"] : COLORS.bd;
   for (let i = 0; i < BD_KEYS.length; i++){
     const seg = Math.max(0, bd[i]) / total * w;
-    ctx.fillStyle = COLORS.bd[i];
+    ctx.fillStyle = BD_COLORS[i];
     ctx.fillRect(x, barY, Math.max(seg, 0), barH);
     if (seg > 46){ ctx.fillStyle = "#04121f"; ctx.font = "bold 10px sans-serif"; ctx.fillText(fmtMs(bd[i]), x + 4, barY + 16); ctx.font = "10px sans-serif"; }
     x += seg;
@@ -763,7 +959,7 @@ function drawBreakdown(cv, bd){
     const label = t("bd." + BD_KEYS[i]) + " " + fmtMs(bd[i]);
     const lw = 12 + ctx.measureText(label).width + 14;
     if (lx + lw > w){ lx = 2; ly += 16; }
-    ctx.fillStyle = COLORS.bd[i]; ctx.fillRect(lx, ly - 8, 8, 8);
+    ctx.fillStyle = BD_COLORS[i]; ctx.fillRect(lx, ly - 8, 8, 8);
     ctx.fillStyle = "#8b98a9"; ctx.fillText(label, lx + 12, ly);
     lx += lw;
   }
@@ -786,14 +982,16 @@ const METRIC_DEFS = [
   { key:"e2e", series:"e2e", color:"#39c5cf", val:(s,l)=>fmtMs(s ? s.e2e.avg : NaN), sub:(s,l)=>s ? "p99 " + fmtMs(s.e2e.p99) : "" },
   { key:"rps", series:"rps", color:"#3fb950", val:(s,l)=>fmtNum(seriesMean("rps", 10)) + " ", unit:"u.reqs", sub:()=>"" },
   { key:"tps", series:"tps", color:"#3fb950", val:(s,l)=>fmtNum(seriesMean("tps", 10)) + " ", unit:"u.toks", sub:()=>"" },
-  { key:"queue", series:"pQueue", color:"#7d8590", val:(s,l)=>fmtNum(l("pQueue")) + " / " + fmtNum(l("dQueue")), sub:()=>"" },
+  { key:"queue", series:"pQueue", color:"#7d8590", val:(s,l)=>fmtNum(l("pQueue")) + " / " + fmtNum(l("dQueue")), sub:()=>"", disaggOnly:true },
+  { key:"wQueue", series:"wQueue", color:"#7d8590", val:(s,l)=>fmtNum(l("wQueue")), sub:()=>"", aggOnly:true },
   { key:"running", series:"running", color:"#bc8cff", val:(s,l)=>fmtNum(l("running")), sub:()=>"" },
   { key:"inflight", series:"inflight", color:"#39c5cf", val:(s,l)=>fmtNum(l("inflight")), sub:()=>"" },
-  { key:"kvP", series:"kvP", color:"#f0883e", val:(s,l)=>fmtPct(l("kvP")), sub:()=>"" },
-  { key:"kvD", series:"kvD", color:"#f0883e", val:(s,l)=>fmtPct(l("kvD")), sub:(s,l)=>t("m.kvDpre.sub") + " " + fmtPct(l("kvDpre")) },
-  { key:"kvDpre", series:"kvDpre", color:"#d29922", val:(s,l)=>fmtPct(l("kvDpre")), sub:()=>"" },
-  { key:"dHandshake", series:"dHandshake", color:"#7ee787", unit:"u.ms", val:(s,l)=>fmtMs(s && s.dHandshake ? s.dHandshake.avg : NaN), sub:(s)=>s && s.dHandshake ? "p99 " + fmtMs(s.dHandshake.p99) : "" },
-  { key:"link", series:"link", color:"#4ea1ff", val:(s,l)=>fmtPct(l("link")), sub:()=>"" },
+  { key:"kvP", series:"kvP", color:"#f0883e", val:(s,l)=>fmtPct(l("kvP")), sub:()=>"", disaggOnly:true },
+  { key:"kvD", series:"kvD", color:"#f0883e", val:(s,l)=>fmtPct(l("kvD")), sub:(s,l)=>t("m.kvDpre.sub") + " " + fmtPct(l("kvDpre")), disaggOnly:true },
+  { key:"kvDpre", series:"kvDpre", color:"#d29922", val:(s,l)=>fmtPct(l("kvDpre")), sub:()=>"", disaggOnly:true },
+  { key:"dHandshake", series:"dHandshake", color:"#7ee787", unit:"u.ms", val:(s,l)=>fmtMs(s && s.dHandshake ? s.dHandshake.avg : NaN), sub:(s)=>s && s.dHandshake ? "p99 " + fmtMs(s.dHandshake.p99) : "", disaggOnly:true },
+  { key:"link", series:"link", color:"#4ea1ff", val:(s,l)=>fmtPct(l("link")), sub:()=>"", disaggOnly:true },
+  { key:"kvW", series:"kvW", color:"#f0883e", val:(s,l)=>fmtPct(l("kvW")), sub:()=>"", aggOnly:true },
 ];
 
 function seriesMean(k, lastN){
@@ -820,7 +1018,7 @@ function buildMetricCards(){
   grid.innerHTML = "";
   for (const def of METRIC_DEFS){
     const card = document.createElement("div");
-    card.className = "mcard";
+    card.className = "mcard"; card.id = "mc_card_" + def.key;
     card.innerHTML =
       '<div class="mtitle" data-i18n="m.' + def.key + '"></div>' +
       '<div class="mval"><span id="mv_' + def.key + '">\u2014</span>' +
@@ -834,7 +1032,11 @@ function buildMetricCards(){
 const METRIC_WINDOW_MS = 10000;
 function updatePanels(){
   const snap = sim.metrics.snapshot();
+  const isAgg = sim.P.mode === "agg";
   for (const def of METRIC_DEFS){
+    const card = document.getElementById("mc_card_" + def.key);
+    const hide = (def.disaggOnly && isAgg) || (def.aggOnly && !isAgg);
+    if (card) card.style.display = hide ? "none" : "";
     const mv = document.getElementById("mv_" + def.key); if (mv) mv.textContent = def.val(snap, lastSeriesVal);
     const ms = document.getElementById("ms_" + def.key); if (ms) ms.textContent = def.sub(snap, lastSeriesVal);
     const mc = document.getElementById("mc_" + def.key);
@@ -894,6 +1096,7 @@ function buildRow(def){
       P[def.key] = sel.value;
       if (def.key === "modelPreset") applyModelPreset(sel.value);
       if (def.key === "gpu") applyGpuPreset(sel.value);
+      if (def.key === "mode") refreshInputs();
       apiPost("/api/params", {params:{[def.key]:P[def.key]}});
     });
     row.appendChild(sel);
@@ -944,6 +1147,9 @@ function applyGpuPreset(name){
 }
 function syncSelect(key){ const sel = document.getElementById("in_" + key); if (sel) sel.value = P[key]; }
 function refreshInputs(){
+  const isAgg = P.mode === "agg";
+  const disaggOnlyKeys = ["numP","numD","lbPolicyD","kvGbP","kvGbD","bandwidthGBs","transferOverheadMs"];
+  const aggOnlyKeys = ["numWorkers","kvGb","chunkedPrefill"];
   for (const def of PARAM_DEFS){
     const inp = document.getElementById("in_" + def.key);
     if (!inp) continue;
@@ -957,15 +1163,27 @@ function refreshInputs(){
         const v = document.getElementById("val_" + def.key); if (v) v.textContent = def.fmt(P[def.key]);
       }
     }
-    if (def.customOnly) row.style.display = P.modelPreset === "custom" ? "" : "none";
+    let display = "";
+    if (def.customOnly && P.modelPreset !== "custom") display = "none";
+    if (disaggOnlyKeys.includes(def.key) && isAgg) display = "none";
+    if (aggOnlyKeys.includes(def.key) && !isAgg) display = "none";
+    row.style.display = display;
   }
 }
 function updateKvInfo(){
   const cell = cellSizeOf(P);
-  const capP = Math.floor(P.kvGbP * 2**30 / cell);
-  const capD = Math.floor(P.kvGbD * 2**30 / cell);
   const fmtTok = v => v >= 1e6 ? (v / 1e6).toFixed(2) + "M" : (v / 1e3).toFixed(0) + "k";
   const el = document.getElementById("kvInfo"); if (!el) return;
+  if (P.mode === "agg"){
+    const capW = Math.floor(P.kvGb * 2**30 / cell);
+    el.innerHTML =
+      t("info.cell") + ": <b>" + (cell / 1024).toFixed(1) + " KB</b>" + t("info.perTok") +
+      (P.mla ? " (MLA)" : P.hybrid ? " (" + P.fullLayers + "/" + P.layers + " " + t("info.fullAttn") + ")" : "") + "<br>" +
+      t("info.capW") + ": <b>" + fmtTok(capW) + "</b> " + t("info.tokens");
+    return;
+  }
+  const capP = Math.floor(P.kvGbP * 2**30 / cell);
+  const capD = Math.floor(P.kvGbD * 2**30 / cell);
   el.innerHTML =
     t("info.cell") + ": <b>" + (cell / 1024).toFixed(1) + " KB</b>" + t("info.perTok") +
     (P.mla ? " (MLA)" : P.hybrid ? " (" + P.fullLayers + "/" + P.layers + " " + t("info.fullAttn") + ")" : "") + "<br>" +

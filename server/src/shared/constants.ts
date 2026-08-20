@@ -7,5 +7,9 @@ export const NTR_CLIP = 4096;
 export const NTR_DECAY_STEPS = 600;
 export const HANDSHAKE_RTT_MS = 2;
 export const PERREQ_REF_CTX = 4096;
-export const SERIES_KEYS = ["ttft","tpot","e2e","rps","tps","pQueue","dQueue","running","kvP","kvD","kvDpre","dHandshake","link","inflight"] as const;
-export const BD_KEYS = ["tokenize","bootstrap","pQueue","prefill","transfer","dQueue","detok"] as const;
+export const SERIES_KEYS = ["ttft","tpot","e2e","rps","tps","pQueue","dQueue","running","kvP","kvD","kvDpre","dHandshake","link","inflight","wQueue","kvW"] as const;
+// TTFT breakdown keys per deployment mode.
+export const BD_KEYS_DISAGG = ["tokenize","bootstrap","pQueue","prefill","transfer","dQueue","detok"] as const;
+export const BD_KEYS_AGG    = ["tokenize","queue","prefill","detok"] as const;
+// Backward-compatible alias (pd-disagg variant).
+export const BD_KEYS = BD_KEYS_DISAGG;

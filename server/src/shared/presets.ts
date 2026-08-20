@@ -30,6 +30,8 @@ export const DEFAULTS: SimParams = {
   layers:48, fullLayers:9, kvHeads:4, headDim:192, dtypeBytes:2, hybrid:true,
   mla:false, kvLoraRank:512, qkRope:64, qHeads:32, swaWindow:128,
   kvGbP:99, kvGbD:99, bandwidthGBs:50,
+  /* agg-mode defaults (backward-compatible: mode defaults to pd-disagg) */
+  mode:"pd-disagg", numWorkers:2, kvGb:99, chunkedPrefill:false,
 };
 
 export const PRESETS: Record<string, Partial<SimParams>> = {
@@ -42,6 +44,13 @@ export const PRESETS: Record<string, Partial<SimParams>> = {
                  prefillTokPerSec:8000, numP:1, numD:2, bandwidthGBs:40},
   decodeSaturated: {...DEFAULTS, qps:10, inputLenMean:512, outputLenMean:1024,
                     maxRunning:24, numP:2, numD:1, decodeMsPerReq:0.4},
+  /* agg-mode presets */
+  aggBalanced: {...DEFAULTS, mode:"agg", numWorkers:2, kvGb:99, chunkedPrefill:false},
+  aggChunkedPrefill: {...DEFAULTS, mode:"agg", numWorkers:2, kvGb:99,
+                      chunkedPrefill:true, chunkSize:8192, inputLenMean:8192},
+  aggDecodeHeavy: {...DEFAULTS, mode:"agg", numWorkers:1, kvGb:141,
+                   outputLenMean:1024, chunkedPrefill:false},
+  aggHighQps: {...DEFAULTS, mode:"agg", numWorkers:4, kvGb:99, qps:16, chunkedPrefill:false},
 };
 
 /** Parameter group display order */
@@ -71,8 +80,10 @@ export const PARAM_DEFS: ParamDef[] = [
   {group:"workload", key:"outputLenMean", min:4, max:32768, log:true, fmt:(v:number)=>fmtTokens(v)},
   {group:"workload", key:"outputDist", type:"select", options:["fixed","uniform","lognormal"], i18nPrefix:"dist."},
   {group:"workload", key:"cacheHitRate", min:0, max:1, step:0.01, fmt:v=>(v*100).toFixed(0)+"%"},
+  {group:"topology", key:"mode", type:"select", options:["pd-disagg","agg"], i18nPrefix:"mode."},
   {group:"topology", key:"numP", min:1, max:8, step:1, fmt:v=>v.toFixed(0)},
   {group:"topology", key:"numD", min:1, max:8, step:1, fmt:v=>v.toFixed(0)},
+  {group:"topology", key:"numWorkers", min:1, max:8, step:1, fmt:v=>v.toFixed(0)},
   {group:"topology", key:"lbPolicyP", type:"select", options:["least","round_robin","power_of_two","random"], i18nPrefix:"lb."},
   {group:"topology", key:"lbPolicyD", type:"select", options:["least","round_robin","power_of_two","random"], i18nPrefix:"lb."},
   {group:"latency", key:"tokenizeUsPerTok", min:0, max:50, step:0.5, fmt:v=>v.toFixed(1)},
@@ -80,6 +91,7 @@ export const PARAM_DEFS: ParamDef[] = [
   {group:"latency", key:"detokenizeMs", min:0, max:50, step:0.5, fmt:v=>v.toFixed(1)},
   {group:"compute", key:"prefillTokPerSec", min:1000, max:100000, step:500, fmt:v=>(v/1000).toFixed(1)+"k"},
   {group:"compute", key:"chunkSize", steps:[1024,2048,4096,8192,16384,32768,65536], fmt:(v:number)=>fmtTokens(v)},
+  {group:"compute", key:"chunkedPrefill", type:"toggle", i18nPrefix:"prefill."},
   {group:"compute", key:"decodeMsBase", min:5, max:200, step:1, fmt:v=>v.toFixed(0)},
   {group:"compute", key:"decodeMsPerReq", min:0, max:2, step:0.05, fmt:v=>v.toFixed(2)},
   {group:"compute", key:"maxRunning", min:1, max:512, step:1, fmt:v=>v.toFixed(0)},
@@ -93,5 +105,6 @@ export const PARAM_DEFS: ParamDef[] = [
   {group:"kv", key:"gpu", type:"select", options:["a100_80g","h100","h200","b200","b300","mi300x","custom"], i18nPrefix:"gpu."},
   {group:"kv", key:"kvGbP", min:1, max:288, step:1, fmt:v=>v.toFixed(0)},
   {group:"kv", key:"kvGbD", min:1, max:288, step:1, fmt:v=>v.toFixed(0)},
+  {group:"kv", key:"kvGb", min:1, max:288, step:1, fmt:v=>v.toFixed(0)},
   {group:"kv", key:"bandwidthGBs", min:0.25, max:200, step:0.25, fmt:v=>v.toFixed(2)},
 ];
