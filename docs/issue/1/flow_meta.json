@@ -1,0 +1,17 @@
+{
+  "issue_number": 1,
+  "issue_title": "【feature】add an aggregated (agg) mode simulation to the existing simulator",
+  "labels": [
+    "enhancement"
+  ],
+  "branch": "issue-1",
+  "base_branch": "main",
+  "worktree_path": ".worktree\\issue-1",
+  "solution_pr_url": "https://github.com/Limixxx/inferflux/pull/3",
+  "solution_pr_number": 3,
+  "code_pr_url": null,
+  "code_pr_number": null,
+  "project_item_id": "PVTI_lAHOBeeNX84Bg4hjzg3PhBM",
+  "created_at": "2026-08-20T03:02:42Z",
+  "status": "In progress"
+}

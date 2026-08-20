@@ -4,7 +4,7 @@ import { DEFAULTS, PRESETS, MODEL_PRESETS, GPU_PRESETS } from "../shared/presets
 import { gpuKvBudget } from "../shared/utils";
 import { SimEngine } from "./SimEngine";
 
-/** Serialize a request for the /render endpoint. */
+/** Serialize a request for the /render endpoint (pd-disagg mode). */
 function serializeReq(r: SimRequest, pIdx: number, dIdx: number): any {
   return {
     id: r.id, stage: r.stage, kvPoll: r.kvPoll,
@@ -19,8 +19,22 @@ function serializeReq(r: SimRequest, pIdx: number, dIdx: number): any {
   };
 }
 
+/** Serialize a request for the /render endpoint (agg mode). */
+function serializeReqAgg(r: SimRequest, wIdx: number): any {
+  return {
+    id: r.id, stage: r.stage,
+    readyAt: r.readyAt,
+    inputLen: r.inputLen, outputLen: r.outputLen, cachedLen: r.cachedLen,
+    uncachedLen: r.uncachedLen, tokensOut: r.tokensOut, retracted: r.retracted,
+    chunksTotal: r.chunksTotal, chunksComputed: r.chunksComputed,
+    chunkOffset: r.chunkOffset,
+    stamps: { ...r.stamps },
+    wIdx,
+  };
+}
+
 const METRIC_WINDOW_MS = 10000;
-const SERIES_KEYS = ["ttft","tpot","e2e","rps","tps","pQueue","dQueue","running","kvP","kvD","kvDpre","dHandshake","link","inflight"];
+const SERIES_KEYS = ["ttft","tpot","e2e","rps","tps","pQueue","dQueue","running","kvP","kvD","kvDpre","dHandshake","link","inflight","wQueue","kvW"];
 
 /**
  * SimService — standalone HTTP server exposing the simulation engine API.
@@ -145,6 +159,26 @@ export class SimService {
   /** Build the full render state for the frontend Renderer (entity-level). */
   getRenderState(): any {
     const eng = this.engine;
+    if (eng.P.mode === "agg") {
+      const wIdx = (w: any) => eng.wList.indexOf(w);
+      const sreq = (r: SimRequest) => serializeReqAgg(r, r.w ? wIdx(r.w) : -1);
+      return {
+        now: eng.now,
+        P: eng.P,
+        retractTotal: eng.retractTotal,
+        mode: "agg",
+        wList: eng.wList.map((w: any) => ({
+          id: w.id, kvUsed: w.kvUsed, draining: w.draining,
+          maxTokens: w.maxTokens(eng.P), ntr: w.ntr, retractGlow: w.retractGlow,
+          nextStepAt: w.nextStepAt,
+          waitingQ: w.waitingQ.map(sreq),
+          running: w.running.map(sreq),
+        })),
+        pList: [], dList: [],
+        allActive: Array.from(eng.allActive).map(sreq),
+        responding: eng.responding.map(sreq),
+      };
+    }
     const pIdx = (p: any) => eng.pList.indexOf(p);
     const dIdx = (d: any) => eng.dList.indexOf(d);
     const sreq = (r: SimRequest) => serializeReq(r, r.p ? pIdx(r.p) : -1, r.d ? dIdx(r.d) : -1);
@@ -153,6 +187,7 @@ export class SimService {
       now: eng.now,
       P: eng.P,
       retractTotal: eng.retractTotal,
+      mode: "pd-disagg",
       pList: eng.pList.map((p: any) => ({
         id: p.id, kvUsed: p.kvUsed, draining: p.draining,
         maxTokens: p.maxTokens(eng.P),
@@ -174,6 +209,7 @@ export class SimService {
         waitingQ: d.waitingQ.map(sreq),
         running: d.running.map(sreq),
       })),
+      wList: [],
       allActive: Array.from(eng.allActive).map(sreq),
       responding: eng.responding.map(sreq),
     };
@@ -200,8 +236,17 @@ export class SimService {
   }
 
   private handleParams(body: SimParamsRequest): void {
+    const prevMode = this.engine.P.mode;
+    const prevChunkedPrefill = this.engine.P.chunkedPrefill;
     Object.assign(this.engine.P, body.params);
-    // Don't reset — let syncTopology() handle topology on next step (matches original)
+    // Mode or chunkedPrefill toggle fundamentally changes the simulation
+    // topology / state machine → must reset (re-initializes metrics bdSeries).
+    if ((body.params.mode != null && body.params.mode !== prevMode) ||
+        (body.params.chunkedPrefill != null && body.params.chunkedPrefill !== prevChunkedPrefill)) {
+      this.engine.reset();
+    }
+    // Other topology changes (numP/numD/numWorkers/kvGb*/...) are handled by
+    // syncTopology() on the next step — matches original behaviour.
   }
 
   private handlePreset(body: SimPresetRequest): void {

@@ -20,7 +20,7 @@ export function makeRequest(engine: ISimEngine, arrivalT: number): SimRequest {
     inputLen, outputLen, cachedLen,
     uncachedLen: inputLen - cachedLen,
     stage: "tokenize", kvPoll: null,
-    p: null, d: null,
+    p: null, d: null, w: null,
     readyAt: Infinity,
     dReadyAt: Infinity,
     dPrealloc: false,
@@ -30,7 +30,9 @@ export function makeRequest(engine: ISimEngine, arrivalT: number): SimRequest {
     retracted: false,
     stamps: { recv: arrivalT, tokenized: NaN, bootstrapDone: NaN, pQueueExit: NaN,
               prefillDone: NaN, transferDone: NaN, preallocDone: NaN,
-              dQueueExit: NaN, firstToken: NaN, lastToken: NaN, detokDone: NaN },
+              dQueueExit: NaN, firstToken: NaN, lastToken: NaN, detokDone: NaN,
+              wQueueExit: NaN, wPrefillDone: NaN },
     lastTokenT: 0,
+    chunkOffset: 0,
   };
 }

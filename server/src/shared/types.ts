@@ -9,6 +9,9 @@ export type LBPolicy = "least" | "round_robin" | "power_of_two" | "random";
 export type DistType = "fixed" | "uniform" | "lognormal";
 export type ArrivalDist = "poisson" | "uniform";
 
+/** Deployment mode: PD-disaggregated (separate P/D + transfer link) or Aggregated (unified workers). */
+export type SimMode = "pd-disagg" | "agg";
+
 /** KVPoll states — mirrors sglang disaggregation/base/conn.py KVPoll */
 export const KVPOLL = {
   Bootstrapping: "Bootstrapping",
@@ -18,8 +21,9 @@ export const KVPOLL = {
 } as const;
 export type KVPollState = (typeof KVPOLL)[keyof typeof KVPOLL];
 
-/** Request lifecycle stages */
+/** Request lifecycle stages. */
 export type ReqStage =
+  /* pd-disagg stages */
   | "tokenize"
   | "p_bootstrap"
   | "p_waiting"
@@ -27,6 +31,11 @@ export type ReqStage =
   | "p_transfer"
   | "d_waiting"
   | "d_running"
+  /* agg stages */
+  | "w_waiting"          // queued for make_batch admission
+  | "w_prefill"          // non-chunked prefill (single GPU iteration)
+  | "w_chunked_prefill"  // chunked prefill (multi-iteration)
+  | "w_decode"           // decode iteration
   | "response"
   | "done";
 
@@ -69,6 +78,11 @@ export interface SimParams {
   kvGbP: number;
   kvGbD: number;
   bandwidthGBs: number;
+  /* agg-mode fields */
+  mode: SimMode;          // deployment mode (default "pd-disagg")
+  numWorkers: number;    // agg: unified worker instance count
+  kvGb: number;          // agg: unified KV budget per worker (GB)
+  chunkedPrefill: boolean; // agg: toggle chunked vs single-shot prefill
 }
 
 /* ---- Model & GPU Presets ---- */
@@ -106,6 +120,9 @@ export interface RequestStamps {
   firstToken: number;
   lastToken: number;
   detokDone: number;
+  /* agg-mode stamps (NaN in pd-disagg mode) */
+  wQueueExit: number;     // make_batch admission time (KV pre-allocated)
+  wPrefillDone: number;   // prefill complete time (first token sampled)
 }
 
 /** A single in-flight or completed simulation request. */
@@ -120,6 +137,7 @@ export interface SimRequest {
   kvPoll: KVPollState | null;
   p: any;    // PrefillInstance (forward ref, avoids circular import)
   d: any;    // DecodeInstance (forward ref, avoids circular import)
+  w: any;    // WorkerInstance (agg mode; null in pd-disagg)
   readyAt: number;
   dReadyAt: number;
   dPrealloc: boolean;
@@ -133,6 +151,8 @@ export interface SimRequest {
   retracted: boolean;
   stamps: RequestStamps;
   lastTokenT: number;
+  /* agg-mode fields */
+  chunkOffset: number;   // current chunked-prefill chunk index (0 in non-chunked)
 }
 
 /** Item on a TransferLink queue. */
@@ -168,6 +188,9 @@ export interface Gauges {
   kvDpre: number;
   link: number;
   inflight: number;
+  /* agg-mode gauges (0 in pd-disagg mode) */
+  wQueue: number;  // agg: total worker waiting-queue depth
+  kvW: number;     // agg: worker KV utilization ratio
 }
 
 /** Minimal engine interface for entity classes (avoids circular imports). */

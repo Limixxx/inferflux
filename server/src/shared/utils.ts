@@ -51,6 +51,20 @@ interface ChunkPrefillRequest {
 /** Wall-clock ms for one prefill chunk */
 export function chunkPrefillMs(P: SimParams, r: ChunkPrefillRequest, idx: number): number {
   const q = Math.min(P.chunkSize, r.uncachedLen - idx * P.chunkSize);
+  return prefillCoreMs(P, r, q, r.cachedLen + idx * P.chunkSize + q / 2);
+}
+
+/**
+ * Full prefill time for agg non-chunked mode — single GPU iteration processes
+ * the entire `uncachedLen` (no chunking). Mirrors chunkPrefillMs with q=uncachedLen.
+ */
+export function fullPrefillMs(P: SimParams, r: ChunkPrefillRequest): number {
+  const q = r.uncachedLen;
+  return prefillCoreMs(P, r, q, r.cachedLen + q / 2);
+}
+
+/** Shared prefill cost model: gemm + per-layer attention (full + SWA). */
+function prefillCoreMs(P: SimParams, r: ChunkPrefillRequest, q: number, ctx: number): number {
   const gemmMs = q / P.prefillTokPerSec * 1000;
   const effFlops = P.prefillTokPerSec * 2 * (P.activeB * 1e9);
   const fullLayers = P.hybrid ? P.fullLayers : P.layers;
@@ -58,7 +72,6 @@ export function chunkPrefillMs(P: SimParams, r: ChunkPrefillRequest, idx: number
   const flopsPerLayer = 4 * P.qHeads * P.headDim;
   const coefFull = flopsPerLayer * fullLayers / effFlops * 1000;
   const coefSwa  = flopsPerLayer * swaLayers  / effFlops * 1000;
-  const ctx = r.cachedLen + idx * P.chunkSize + q / 2;
   const W = P.swaWindow || 0;
   const swaCtx = W > 0 ? Math.min(W, ctx) : ctx;
   return gemmMs + coefFull * q * ctx + coefSwa * q * swaCtx;
