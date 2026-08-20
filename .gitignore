@@ -12,3 +12,6 @@ server/cert.pem
 # 拉取的外部源码副本
 sglang_*.py
 ntr.py
+
+./server/dist
+./server/node_modules
