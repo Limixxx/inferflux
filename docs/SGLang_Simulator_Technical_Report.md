@@ -984,6 +984,14 @@ class ModelConfig:
 模拟器使用 **tick-based** 离散事件仿真：
 
 ```python
+@dataclass
+class SimEvent:
+    """仿真事件记录（用于时序分析）"""
+    tick: int
+    event_type: str
+    duration: int = 0
+
+
 class SimulationClock:
     """全局仿真时钟（可选工具，不参与核心 tick 循环）
 
@@ -2089,6 +2097,7 @@ class RadixPrefixCache(BasePrefixCache):
                 indices[match_len:insert_len],
             )
             child.set_parent(node)
+            self._size_info.evictable_size += child.length  # 更新可驱逐大小
             node = child
         return InsertResult(insert_len, RadixCacheHandle(insert_len, node))
 
@@ -2303,14 +2312,14 @@ def check_integrity(self) -> None:
 #### cuda_graph_max_bs 自动计算
 
 ```python
-def _determine_cuda_graph_bs(cuda_graph_bs, cuda_graph_max_bs, free_memory):
+def _determine_cuda_graph_bs(cuda_graph_bs, cuda_graph_max_bs, total_memory):
     if cuda_graph_bs is not None:
         return cuda_graph_bs  # 用户指定
 
-    free_memory_gb = free_memory / (1024**3)
+    total_memory_gb = total_memory / (1024**3)
     if cuda_graph_max_bs is None:
         # 自动选择：H200 (80+ GiB) → 256, 其他 → 160
-        cuda_graph_max_bs = 256 if free_memory_gb > 80 else 160
+        cuda_graph_max_bs = 256 if total_memory_gb > 80 else 160
 
     if cuda_graph_max_bs < 1:
         return []  # 禁用 CUDA Graph
@@ -2712,6 +2721,8 @@ class SimScheduler(SchedulerIOMixin):
             sp = msg.sampling_params
             if sp.max_tokens > max_output_len:
                 sp = replace(sp, max_tokens=max_output_len)
+            if sp.max_tokens <= 0:
+                return  # 无需生成 token，跳过
             msg.sampling_params = sp
             self.prefill_manager.add_one_req(msg)
         elif isinstance(msg, AbortBackendMsg):
