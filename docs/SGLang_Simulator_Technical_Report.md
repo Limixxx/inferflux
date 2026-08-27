@@ -89,7 +89,8 @@ class Req:
         # complete_one() 需要直接修改 device_len
         self.device_len = len(self.input_ids)       # 当前在设备上的总长度
         self.max_device_len = len(self.input_ids) + self.output_len  # 最大设备长度（初始化时固定，不随 append_host 增长）
-        assert 0 <= self.cached_len < self.device_len <= self.max_device_len
+        # 注意：使用 <= 而非 <，允许全缓存命中（cached_len == device_len，extend_len=0）的情况
+        assert 0 <= self.cached_len <= self.device_len <= self.max_device_len
 
     @property
     def remain_len(self) -> int:       # 剩余可解码长度
@@ -371,8 +372,9 @@ class PrefillAdder:
         #    c. 检查 available_size >= needed + reserved_size
         #    d. lock handle
         #    e. allocate table_idx
-        #    f. 复制 cached tokens 到 token_pool
-        #    g. 决定 chunk_size, 创建 Req 或 ChunkedReq
+        #    f. 复制 cached tokens + page entries 到 token_pool/page_table
+        #    g. 复制 extend tokens 到 token_pool（供 _forward 读取 batch.input_ids）
+        #    h. 决定 chunk_size, 创建 Req 或 ChunkedReq
 ```
 
 #### 3.3.3 DecodeManager
@@ -610,8 +612,10 @@ def run_tick_overlap(self, incoming_msgs):
        """计算可分配的页数。total_memory 为 GPU 总显存（字节）。"""
        # 模型权重占用
        model_memory = estimate_model_memory(model_config, config.dtype_size)
-       # 剩余可用
-       available = int(config.memory_ratio * total_memory) - model_memory
+       # CUDA Graph buffer 占用（需先计算，从可用内存中扣除）
+       graph_buffer = estimate_graph_buffer(config.cuda_graph_bs, model_config)
+       # 剩余可用 = 比例预算 - 模型权重 - graph buffer
+       available = int(config.memory_ratio * total_memory) - model_memory - graph_buffer
        # KV cache 每页大小
        # div_even 返回每 GPU 的 KV head 分布列表，sum 后得到总 KV head 数
        kv_heads_per_gpu = sum(div_even(model_config.num_kv_heads, config.tp_size, allow_replicate=True))
@@ -623,22 +627,14 @@ def run_tick_overlap(self, incoming_msgs):
            * config.dtype_size  # float16=2, bfloat16=2, float8=1
            * model_config.num_layers
        )
-       # 可分配的页数
-       num_pages = available // cache_per_page
-       # CUDA Graph buffer 占用
-       graph_buffer = estimate_graph_buffer(config.cuda_graph_bs, model_config)
+       # 可分配的页数（OOM 保护：负数时返回 0，由调用方触发 OOM 处理）
+       num_pages = max(0, available // cache_per_page)
        return num_pages, model_memory, graph_buffer
    ```
 
 2. **OOM 预测**：当 `num_pages < 1` 时触发 OOM
-3. **模拟显存参数**：
-   ```python
-   @dataclass
-   class SimMemoryConfig:
-       total_gpu_memory: int       # 模拟 GPU 总显存 (bytes)
-       memory_ratio: float = 0.88  # KV cache 可用比例
-       dtype_size: int = 2         # float16/bfloat16
-   ```
+
+> 注意：显存参数（`total_gpu_memory`、`memory_ratio`、`dtype_size`）已统一在 `SimulatorConfig` 中定义（见 §4.2），无需单独的 `SimMemoryConfig`。`calculate_memory_budget` 直接从 `SimulatorConfig` 读取这些字段。
 
 ### 3.4 模拟组件详细规格
 
@@ -1710,9 +1706,14 @@ def div_ceil(a: int, b: int) -> int:
 def div_even(a: int, b: int, allow_replicate: bool = False) -> List[int]:
     """
     将 a 均分到 b 份，返回每份大小列表。
-    allow_replicate=True 时允许复制（用于 TP 下 head 分配）。
+    allow_replicate=True 时允许 a < b（部分份为 0，用于 TP 下 head 复制）。
+    allow_replicate=False 时要求 a >= b，否则抛出 ValueError。
     例: div_even(8, 3) → [3, 3, 2]
     """
+    if not allow_replicate and a < b:
+        raise ValueError(f"div_even({a}, {b}) with allow_replicate=False requires a >= b")
+    if a == 0:
+        return [0] * b
     base = a // b
     remainder = a % b
     result = [base + 1] * remainder + [base] * (b - remainder)
@@ -1736,7 +1737,9 @@ class NaivePrefixCache(BasePrefixCache):
     def match_prefix(self, input_ids) -> MatchResult:
         return MatchResult(NaiveCacheHandle(0))  # cached_len=0
     def insert_prefix(self, input_ids, indices) -> InsertResult:
-        return InsertResult(0, NaiveCacheHandle(len(input_ids)))
+        # cached_len=0：NaiveCache 不存储前缀，所有页在 finished=True 时通过
+        # cache_req 的 _free(page_indices[0:]) 全部回收，避免内存泄漏
+        return InsertResult(0, NaiveCacheHandle(0))
     def lock_handle(self, handle, unlock=False): pass  # noop
     def evict(self, size): return []
     def reset(self): pass
@@ -2439,7 +2442,8 @@ class SimulationMetrics:
                 self.completed_requests += 1
 
     def record_batch(self, batch: 'Batch', gpu_ticks: int) -> None:
-        """记录一次 batch forward"""
+        """记录一次 batch forward。GPU busy ticks 由 record_tick 统一管理，
+        此处不重复累加，避免双重计数。"""
         if batch.is_prefill:
             self.prefill_batches += 1
             self.avg_prefill_batch_size = (
@@ -2452,7 +2456,7 @@ class SimulationMetrics:
                 (self.avg_decode_batch_size * (self.decode_batches - 1) + batch.size)
                 / self.decode_batches
             )
-        self.gpu_busy_ticks += gpu_ticks
+        # gpu_ticks 参数保留供调用方通过 record_tick(tick, gpu_busy=gpu_ticks) 记录
 ```
 
 #### 完整测试示例：单请求 prefill → decode → finish
@@ -2537,12 +2541,15 @@ def test_overlap_vs_non_overlap():
             reply = scheduler.run_tick(msgs)
             metrics.record_reply(reply, tick)
             # 记录本 tick 实际调度的 batch 信息
+            # 注意：GPU busy 只在有 batch 时记录，避免与 record_batch 重复计数
             if scheduler.last_batch is not None:
                 gpu_ticks = (config.graph_replay_cost_ticks
                              if config.enable_cuda_graph
                              else config.eager_forward_cost_ticks)
                 metrics.record_batch(scheduler.last_batch, gpu_ticks)
-            metrics.record_tick(tick, gpu_busy=1)  # 每个 tick 有 1 tick GPU 活跃
+                metrics.record_tick(tick, gpu_busy=gpu_ticks)
+            else:
+                metrics.record_tick(tick, gpu_busy=0)  # 无 batch，GPU 空闲
 
         # Overlap 模式需要额外一个空 tick 刷新 last_data
         if overlap:
@@ -2554,7 +2561,9 @@ def test_overlap_vs_non_overlap():
         print(f"  GPU utilization: {metrics.gpu_utilization:.2%}")
         print(f"  Avg batch size: prefill={metrics.avg_prefill_batch_size}, decode={metrics.avg_decode_batch_size}")
 
-    # 预期：overlap 模式 GPU 利用率应显著高于 non-overlap
+    # 预期：overlap 模式因延迟处理 last_data，相同 tick 内可处理更多 batch，
+    # GPU 利用率应高于 non-overlap。注意：mock 不模拟真实 GPU 时序，
+    # 实际差异取决于 graph_replay_cost_ticks vs eager_forward_cost_ticks 的配置
 ```
 
 ### 9.11 完整实现代码集
@@ -2912,8 +2921,14 @@ class PrefillAdder:
             self.table_manager.page_table[table_idx][:cached_len] = \
                 handle.get_matched_indices()
 
-        # 8. 决定 chunk_size
+        # 7b. 复制 extend 部分的 token 到 token_pool（供 _forward 读取 batch.input_ids）
+        # 注意：page_table 的 extend 部分由 _prepare_batch 中的 allocate_paged 填充
         chunk_size = min(extend_len, remaining_budget)
+        if chunk_size > 0:
+            self.table_manager.token_pool[table_idx][cached_len:cached_len + chunk_size] = \
+                pending_req.input_ids[cached_len:cached_len + chunk_size]
+
+        # 8. 决定 chunk_size（复用 7b 已计算的值）
         is_chunked = chunk_size < extend_len
 
         if is_chunked:
@@ -2976,6 +2991,11 @@ class PrefillAdder:
         # 决定 chunk_size
         chunk_size = min(extend_len, remaining_budget)
         is_chunked = chunk_size < extend_len
+
+        # 复制本 chunk 的 token 到 token_pool（供 _forward 读取 batch.input_ids）
+        if chunk_size > 0:
+            self.table_manager.token_pool[table_idx][cached_len:cached_len + chunk_size] = \
+                pending_req.input_ids[cached_len:cached_len + chunk_size]
 
         if is_chunked:
             req = ChunkedReq(
@@ -3424,6 +3444,8 @@ class SimulationMetrics:
                 self.completed_requests += 1
 
     def record_batch(self, batch: 'Batch', gpu_ticks: int) -> None:
+        """记录 batch 统计信息。GPU busy ticks 由 record_tick 统一管理，
+        此处不重复累加 gpu_busy_ticks，避免与 record_tick 双重计数。"""
         if batch.is_prefill:
             self.prefill_batches += 1
             n = self.prefill_batches
@@ -3434,7 +3456,8 @@ class SimulationMetrics:
             n = self.decode_batches
             old = self.avg_decode_batch_size
             self.avg_decode_batch_size = (old * (n - 1) + batch.size) / n
-        self.gpu_busy_ticks += gpu_ticks
+        # gpu_ticks 参数保留用于调用方通过 record_tick(tick, gpu_busy=gpu_ticks) 记录
+        # 此处不直接累加，防止与 record_tick 的 gpu_busy 参数重复计数
 
     def record_tick(self, tick: int, gpu_busy: int = 0) -> None:
         self.total_ticks = max(self.total_ticks, tick + 1)
@@ -3456,6 +3479,10 @@ class SimulationMetrics:
 | **Overlap 模式 last_data 残留** | 调用方需发送空 tick `run_tick([])` 刷新 | §9.4 `_overlap_tick` |
 | **dummy_req 进入采样** | `pad_batch` 只影响 `padded_reqs`，不影响 `batch.reqs`，采样仅处理 `batch.reqs` | §9.11 SimGraphRunner |
 | **所有 running_reqs 完成** | `decode_manager.schedule_next_batch` 返回 `None`，转 prefill 调度 | §9.11 DecodeManager |
+| **全缓存命中（cached_len == input_len）** | `Req.__post_init__` 使用 `<=` 断言允许 `cached_len == device_len`；`chunk_size=0`，`complete_one` 仍推进 `device_len` 生成首 token | §2.2.2, §9.11 PrefillAdder |
+| **NaiveCache 页回收** | `insert_prefix` 返回 `NaiveCacheHandle(0)`，确保 `finished=True` 时 `_free(page_indices[0:])` 回收全部页 | §9.3b |
+| **内存预算为负（模型过大）** | `calculate_memory_budget` 使用 `max(0, ...)` 返回 0 页，`graph_buffer` 从 available 中扣除 | §3.3.9 |
+| **token_pool extend 部分未初始化** | `try_add_one` 和 `_try_add_one_chunked` 均复制 extend tokens 到 `token_pool`，确保 `batch.input_ids` 正确 | §9.11 PrefillAdder |
 
 ---
 
