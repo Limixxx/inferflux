@@ -1,0 +1,19 @@
+{
+  "issue_number": 9,
+  "issue_title": "[SGLang-Sim] S0: 模块骨架与顶层配置/Context/消息类型",
+  "labels": [
+    "enhancement",
+    "sglang-simulator",
+    "sglang-foundation"
+  ],
+  "branch": "issue-9",
+  "base_branch": "main",
+  "worktree_path": ".worktree\\issue-9",
+  "solution_pr_url": "https://github.com/Limixxx/inferflux/pull/31",
+  "solution_pr_number": 31,
+  "code_pr_url": null,
+  "code_pr_number": null,
+  "project_item_id": "PVTI_lAHOBeeNX84Bg4hjzg4NMyo",
+  "created_at": "2026-08-27T06:33:25Z",
+  "status": "In progress"
+}
