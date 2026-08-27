@@ -1,0 +1,19 @@
+{
+  "issue_number": 11,
+  "issue_title": "[SGLang-Sim] K1: KVCache 基础抽象层（BaseKVCachePool/BasePrefixCache/CacheHandle/MatchResult/InsertResult）+ TableManager",
+  "labels": [
+    "enhancement",
+    "sglang-simulator",
+    "sglang-kvcache"
+  ],
+  "branch": "issue-11",
+  "base_branch": "main",
+  "worktree_path": ".worktree\\issue-11",
+  "solution_pr_url": "https://github.com/Limixxx/inferflux/pull/36",
+  "solution_pr_number": 36,
+  "code_pr_url": null,
+  "code_pr_number": null,
+  "project_item_id": "PVTI_lAHOBeeNX84Bg4hjzg4NNDY",
+  "created_at": "2026-08-27T07:46:10Z",
+  "status": "In progress"
+}

@@ -10,6 +10,9 @@ export {
   SimRespMsgTag,
   SimRespMsg,
   TableManager,
+  BaseCacheHandle,
+  MatchResult,
+  InsertResult,
   CacheManager,
   SimScheduler,
   SimCommGroup,
@@ -38,3 +41,13 @@ export {
 } from "./entities";
 
 export type { PendingReqOpts } from "./entities";
+
+// K1: cache 抽象层
+export {
+  CacheSizeInfo,
+  BaseCacheHandle as BaseCacheHandleClass,
+  MatchResult as MatchResultClass,
+  InsertResult as InsertResultClass,
+  BaseKVCachePool,
+  BasePrefixCache,
+} from "./cache";
