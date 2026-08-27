@@ -105,6 +105,13 @@ export interface SimulatorConfig {
   commBandwidthBytesPerTick: number;
   commOverlapWithCompute: boolean;
 
+  // ===== 并行通信统一参数（P0 新增）=====
+  networkBandwidthGBps: number;
+  networkLatencyUs: number;
+  tpEfficiency: number;
+  epEfficiency: number;
+  cpEfficiency: number;
+
   // ===== 离线模式 =====
   offlineMode: boolean;
 
@@ -162,6 +169,11 @@ export const DEFAULT_SIMULATOR_CONFIG: SimulatorConfig = {
   ppPipelineSchedule: "1f1b",
   commBandwidthBytesPerTick: 1_000_000,
   commOverlapWithCompute: true,
+  networkBandwidthGBps: 100,
+  networkLatencyUs: 5,
+  tpEfficiency: 0.95,
+  epEfficiency: 0.90,
+  cpEfficiency: 0.90,
   offlineMode: false,
   eosTokenId: 0,
   mockSampleMode: "random",
@@ -223,10 +235,16 @@ export interface SimScheduler {
   runTick(incoming: SimRequestMsg[]): SimRespMsg[];
 }
 
-/** 通信组桩（P0 实现，size=1 时为 noop） */
+/** 通信组类型标识（P0 新增） */
+export type CommGroupType = "tp" | "ep" | "pp" | "cp" | "dp_attn";
+
+/** 通信组（P0 完整实现，size=1 时为 noop） */
 export interface SimCommGroup {
-  allReduce(dataBytes: number): number;
-  allToAll(dataBytes: number): number;
-  sendRecv(dataBytes: number): number;
+  readonly groupType: CommGroupType;
+  readonly size: number;
+  allReduce(tensorBytes: number): number;
+  allGather(sizes: number[]): number;
+  allToAll(sendSizes: number[], recvSizes: number[]): number;
+  sendRecv(bytes: number, peer: number): number;
   barrier(): void;
 }

@@ -16,6 +16,7 @@ export {
   CacheManager,
   SimScheduler,
   SimCommGroup,
+  CommGroupType,
 } from "./types";
 
 export type { SamplingDtype, SamplingParamsOpts } from "./types";
@@ -49,3 +50,18 @@ export {
   estimateGraphBuffer,
   calculateMemoryBudget,
 } from "./cache";
+
+// P0: 并行仿真基础设施
+export {
+  SimCommGroup as SimCommGroupImpl,
+  SimCommGroupOpts,
+  MockTPGroup,
+  ParallelTopology,
+  ParallelTopologyOpts,
+  ParallelMetrics,
+} from "./parallel";
+
+// P0: 仿真指标集合
+export {
+  SimulationMetrics,
+} from "./metrics";

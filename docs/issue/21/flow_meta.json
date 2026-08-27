@@ -1,0 +1,20 @@
+{
+  "issue_number": 21,
+  "issue_title": "[SGLang-Sim] P0: SimCommGroup 统一成本模型 + ParallelTopology + ParallelMetrics 子结构",
+  "labels": [
+    "enhancement",
+    "sglang-simulator",
+    "sglang-foundation",
+    "sglang-parallel"
+  ],
+  "branch": "issue-21",
+  "base_branch": "main",
+  "worktree_path": ".worktree\\issue-21",
+  "solution_pr_url": "https://github.com/Limixxx/inferflux/pull/39",
+  "solution_pr_number": 39,
+  "code_pr_url": null,
+  "code_pr_number": null,
+  "project_item_id": "PVTI_lAHOBeeNX84Bg4hjzg4NO0M",
+  "created_at": "2026-08-27T08:24:32Z",
+  "status": "In progress"
+}
