@@ -200,21 +200,22 @@ export interface SimRespMsg {
   reason?: string;
 }
 
+// ===== K1 类型导入 =====
+
+import { TableManager } from "./scheduler";
+export { TableManager };
+
+import { BaseCacheHandle, MatchResult, InsertResult } from "./cache";
+export { BaseCacheHandle, MatchResult, InsertResult };
+
 // ===== 占位接口（后续 Issue 实现） =====
 
-/** 表管理器桩（S1 实现） */
-export interface TableManager {
-  allocate(): number;
-  free(tableIdx: number): void;
-  readonly availableSize: number;
-}
-
-/** 缓存管理器桩（S1 实现） */
+/** 缓存管理器桩（K3 实现） */
 export interface CacheManager {
   readonly availableSize: number;
-  matchReq(req: unknown): unknown;
-  lockReq(handle: unknown): void;
-  unlockReq(handle: unknown): void;
+  matchReq(req: unknown): MatchResult;
+  lockReq(handle: BaseCacheHandle): void;
+  unlockReq(handle: BaseCacheHandle): void;
 }
 
 /** 调度器桩（S1 实现） */
