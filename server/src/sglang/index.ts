@@ -42,12 +42,10 @@ export {
 
 export type { PendingReqOpts } from "./entities";
 
-// K1: cache 抽象层
+// K5: 内存预算基础公式 (§3.3.9)
 export {
-  CacheSizeInfo,
-  BaseCacheHandle as BaseCacheHandleClass,
-  MatchResult as MatchResultClass,
-  InsertResult as InsertResultClass,
-  BaseKVCachePool,
-  BasePrefixCache,
+  MemoryBudgetResult,
+  estimateModelMemory,
+  estimateGraphBuffer,
+  calculateMemoryBudget,
 } from "./cache";
