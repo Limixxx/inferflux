@@ -1,12 +1,157 @@
-# AGENT.md — TS ↔ pd-disagg.html 对应关系
+# AGENT.md — InferFlux Server 项目指南
 
-本文档记录 `server/src/` 下 TypeScript 文件与原始 `pd-disagg.html` 的逐段对应关系。当 HTML 更新后，Agent 可据此定位需要同步修改的 TS 文件。
-
-> **行号基于 pd-disagg.html 原文**。HTML 更新后行号可能漂移，请以函数名/类名/标记为锚点。
+> ## ⚠️ 项目范围与修改边界（最高优先级约束）
+>
+> **本项目仅限于 `server/` 目录下的内容。仓库中其他内容均从其他项目同步而来，禁止修改。**
+>
+> | 路径 | 是否可修改 | 说明 |
+> |------|-----------|------|
+> | `server/**` | ✅ 可以 | **本项目唯一可修改范围** |
+> | `*.html`（根目录） | ❌ 禁止 | 从上游 inferflux 项目同步（如 `pd-disagg.html`、`index.html` 等） |
+> | `vendor/**` | ❌ 禁止 | 第三方库（three.js 等），外部同步 |
+> | `docs/**` | ❌ 禁止 | 工作流产物 / 外部文档，非本项目源码 |
+> | `.gitignore`、`LICENSE`、根 `README.md` | ❌ 禁止 | 仓库级文件，外部维护 |
+>
+> **规则**：任何代码改动、新增文件、配置调整，都必须且只能在 `server/` 目录内进行。若任务看似需要修改 `server/` 之外的文件（例如同步 HTML 变更），应视为**只读参考**——以根目录 HTML 为参考来源，将对应逻辑同步到 `server/src/` 下的 TS 文件，但**不得修改 HTML 本身**。
 
 ---
 
-## 1. 全局映射总览
+## 1. 项目概述
+
+**InferFlux Server** 是 LLM 推理系统可视化项目 InferFlux 的 TypeScript 后端，位于 `server/` 目录。它将原始单文件 `pd-disagg.html` 中的模拟引擎与前端渲染逻辑分离，采用面向对象设计，HTTP 服务与模拟服务独立运行。
+
+支持两种部署模式：
+- **PD-Disagg（PD 分离）**：Prefill 与 Decode 运行在物理分离的实例上，通过 KV 传输链路连接。
+- **Agg（聚合）**：统一 Worker 实例就地完成 prefill→decode，无传输链路，模拟 SGLang make_batch 混合批调度。
+
+技术栈：TypeScript（strict 模式） + Node.js 内置 `http` 模块，零运行时依赖。
+
+---
+
+## 2. 目录结构
+
+```
+server/
+├── package.json            # 项目配置（零运行时依赖）
+├── tsconfig.json           # strict 模式 TypeScript 配置
+├── README.md               # 项目说明
+├── AGENT.md                # 本文件
+├── public/                 # HttpService 静态服务根目录
+│   └── pd-disagg.html      # 前端入口（从根目录同步的副本）
+├── scripts/                # 启动脚本
+│   ├── start.ps1 / start.sh
+│   ├── fetch_abatom.ps1 / .sh   # 同步根目录 HTML 到 public/
+└── src/
+    ├── index.ts            # 主入口：启动 SimService + HttpService
+    ├── shared/             # 共享层（类型、常量、工具、i18n、预设）
+    │   ├── types.ts        # 所有接口与类型定义（SimParams, SimRequest, Gauges …）
+    │   ├── constants.ts    # 引擎常量（TICK, RING_MAX, KVPOLL, BD_KEYS_* …）
+    │   ├── presets.ts      # 模型/GPU 预设、默认参数、侧边栏定义 PARAM_DEFS
+    │   ├── utils.ts        # 工具函数（clamp, cellSizeOf, chunkPrefillMs, fullPrefillMs …）
+    │   ├── rng.ts          # 伪随机数生成器（mulberry32, 采样分布）
+    │   └── i18n.ts         # 中英文词典 + t() 翻译函数
+    ├── sim/                # 模拟服务（独立 HTTP API）
+    │   ├── entities/
+    │   │   ├── Request.ts        # 请求工厂 makeRequest
+    │   │   ├── TransferLink.ts   # Prefill→Decode 传输链路（pd-disagg 模式）
+    │   │   ├── PrefillInstance.ts  # Prefill 实例（pd-disagg 模式）
+    │   │   ├── DecodeInstance.ts   # Decode 实例（pd-disagg 模式）
+    │   │   └── WorkerInstance.ts   # Worker 实例（agg 模式：混合批调度）
+    │   ├── LoadBalancer.ts     # 负载均衡（least/round_robin/P2C/random）
+    │   ├── MetricsCollector.ts # 指标采集（模式感知：4 列 vs 7 列 breakdown）
+    │   ├── SimEngine.ts       # 核心引擎（step 驱动 PD/Agg 两种生命周期）
+    │   └── SimService.ts      # 模拟服务 HTTP 服务器（端口 3001）
+    ├── http/
+    │   └── HttpService.ts      # HTTP 静态服务 + API 代理（端口 8888）
+    └── test/
+        └── agg.test.ts         # agg 模式验收测试（16 个用例）
+```
+
+---
+
+## 3. 架构设计
+
+### 两服务分离
+
+| 服务 | 端口 | 职责 |
+|------|------|------|
+| **SimService** | 3001 | 封装 SimEngine，提供 REST API，驱动模拟循环 |
+| **HttpService** | 8888 | 提供前端静态文件（`server/public/`），代理 `/api/*` 到 SimService |
+
+### SimService API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/state` | 当前模拟状态（指标、快照、时序数据） |
+| GET | `/render` | 前端渲染所需的实体级状态（模式感知序列化） |
+| POST | `/command` | 控制模拟（start / pause / step / reset / speed） |
+| POST | `/params` | 更新参数（mode/chunkedPrefill 变更触发 reset） |
+| POST | `/preset` | 应用预设场景（含 4 个 agg 预设） |
+| GET | `/health` | 健康检查 |
+
+### 双部署模式
+
+| 模式 | 实体 | 传输链路 | 请求生命周期 |
+|------|------|---------|------------|
+| **pd-disagg** | PrefillInstance + DecodeInstance | TransferLink | tokenize → bootstrap → P queue → chunked prefill → KV transfer → D queue → decode → detok |
+| **agg** | WorkerInstance | 无 | tokenize → waiting → prefill（单次/分块）→ decode → detok |
+
+Agg 模式核心：统一 `running` 批次混合 prefill+decode；step latency = `max(prefill_compute, decode_step)`；make_batch 入场一次性预分配全部 inputLen 的 KV。
+
+### 模式感知
+
+几乎所有核心组件都按 `P.mode` 分支：`SimEngine.step()` → `stepAgg()`/`stepDisagg()`；`MetricsCollector` 按模式产出 4 列或 7 列 breakdown；`SimService.getRenderState()` 按模式序列化不同实体；`sampleGauges()` 按模式返回不同 gauge。**修改任一组件时，务必同时考虑两种模式。**
+
+---
+
+## 4. 常用命令
+
+```bash
+cd server
+
+# 安装依赖（仅 devDependencies：typescript / @types/node / ts-node）
+npm install
+
+# 编译（strict 模式，零错误）→ dist/
+npm run build
+
+# 启动（编译后）
+npm start
+# 自定义端口：node dist/index.js --http-port=8888 --sim-port=3001
+
+# 开发模式（ts-node 热编译）
+npm run dev
+
+# 运行验收测试（16 个 agg 用例，Node 内置 assert）
+npx ts-node src/test/agg.test.ts
+```
+
+启动后：
+- 前端页面：`http://localhost:8888/pd-disagg.html`
+- 模拟 API：`http://localhost:3001/state`
+
+也可用 `scripts/start.ps1`（Windows）或 `scripts/start.sh`（Linux/macOS）。
+
+---
+
+## 5. 代码约定
+
+- **strict 模式**：所有 TS 文件必须通过 `tsc` strict 编译，零诊断错误。
+- **零运行时依赖**：仅依赖 Node.js 内置模块（`http`/`fs`/`path`），`dependencies` 为空。
+- **避免循环导入**：`types.ts` 中 `SimRequest.p`/`.d`/`.w` 声明为 `any`，通过 `ISimEngine` 接口解耦实体与引擎。
+- **模式感知**：新增功能需同时考虑 pd-disagg 与 agg 两种模式；pd-disagg 专有字段在 agg 模式应归零，反之亦然。
+- **HTML 同步**：当根目录 `pd-disagg.html` 更新后，按下文「TS ↔ HTML 对应关系」定位 TS 文件并同步逻辑，但**不修改 HTML 本身**。
+- **最小改动**：优先编辑现有文件，不新建文件；不做超出请求范围的「改进」。
+
+---
+
+## 6. TS ↔ pd-disagg.html 对应关系
+
+> 本节记录 `server/src/` 下 TypeScript 文件与原始 `pd-disagg.html` 的逐段对应关系。当 HTML 更新后，Agent 可据此定位需要同步修改的 TS 文件。
+>
+> **行号基于 pd-disagg.html 原文**。HTML 更新后行号可能漂移，请以函数名/类名/标记为锚点。
+
+### 6.1 全局映射总览
 
 | HTML 行号范围 | HTML 内容 | TS 文件 | 状态 |
 |---|---|---|---|
@@ -37,9 +182,9 @@
 
 ---
 
-## 2. 逐文件详细对应
+### 6.2 逐文件详细对应
 
-### `src/shared/types.ts`
+##### `src/shared/types.ts`
 
 | HTML 行号 | HTML 内容 | TS 对应 |
 |---|---|---|
@@ -63,7 +208,7 @@
 
 **注意**：`SimRequest.p` 和 `.d` 在 TS 中声明为 `any`（非 `PrefillInstance | null`），以避免 types.ts ↔ entity 文件之间的循环导入。同理 `SimRequest.w` 声明为 `any`。
 
-### `src/shared/constants.ts`
+##### `src/shared/constants.ts`
 
 | HTML 行号 | HTML 常量 | TS 对应 |
 |---|---|---|
@@ -81,7 +226,7 @@
 | — | — | `export const BD_KEYS_AGG` — **新增** 4 列（tokenize/queue/prefill/detok） |
 | — | — | `export const BD_KEYS = BD_KEYS_DISAGG` — 向后兼容别名 |
 
-### `src/shared/utils.ts`
+#### `src/shared/utils.ts`
 
 | HTML 行号 | HTML 函数 | TS 对应 | 签名变化 |
 |---|---|---|---|
@@ -103,7 +248,7 @@
 
 **新增函数关系**：`fullPrefillMs` 和 `chunkPrefillMs` 均调用内部 `prefillCoreMs`——提取了 gemm + 全注意力/SWA 注意力成本计算为共享逻辑。
 
-### `src/shared/rng.ts`
+#### `src/shared/rng.ts`
 
 | HTML 行号 | HTML 函数 | TS 对应 |
 |---|---|---|
@@ -114,7 +259,7 @@
 
 新增类型：`export type RNG = () => number`
 
-### `src/shared/presets.ts`
+#### `src/shared/presets.ts`
 
 | HTML 行号 | HTML 内容 | TS 对应 |
 |---|---|---|
@@ -143,7 +288,7 @@
 | `kvGb` | slider, min:1, max:288 | kv | agg 统一 KV 显存 |
 | `chunkedPrefill` | `toggle` | compute | 分块 Prefill 开关 |
 
-### `src/shared/i18n.ts`
+#### `src/shared/i18n.ts`
 
 | HTML 行号 | HTML 内容 | TS 对应 |
 |---|---|---|
@@ -170,7 +315,7 @@
 | `info.capW` | Worker 容量信息标签 |
 | `lg.wPrefill`, `lg.wChunkedPrefill`, `lg.wDecode` | agg 实体日志标签 |
 
-### `src/sim/entities/Request.ts`
+#### `src/sim/entities/Request.ts`
 
 | HTML 行号 | HTML 内容 | TS 对应 |
 |---|---|---|
@@ -187,7 +332,7 @@
 | `stamps.wQueueExit` | `NaN` | make_batch 入场时间 |
 | `stamps.wPrefillDone` | `NaN` | prefill 完成时间 |
 
-### `src/sim/entities/TransferLink.ts`
+#### `src/sim/entities/TransferLink.ts`
 
 | HTML 行号 | HTML 内容 | TS 对应 |
 |---|---|---|
@@ -195,7 +340,7 @@
 
 **注意**：TransferLink 仅在 pd-disagg 模式使用，agg 模式无传输链路。
 
-### `src/sim/entities/PrefillInstance.ts`
+#### `src/sim/entities/PrefillInstance.ts`
 
 | HTML 行号 | HTML 内容 | TS 对应 |
 |---|---|---|
@@ -204,7 +349,7 @@
 
 **注意**：PrefillInstance 仅在 pd-disagg 模式使用。
 
-### `src/sim/entities/DecodeInstance.ts`
+#### `src/sim/entities/DecodeInstance.ts`
 
 | HTML 行号 | HTML 内容 | TS 对应 |
 |---|---|---|
@@ -214,7 +359,7 @@
 
 **注意**：DecodeInstance 仅在 pd-disagg 模式使用。
 
-### `src/sim/entities/WorkerInstance.ts` (新增)
+#### `src/sim/entities/WorkerInstance.ts` (新增)
 
 无 HTML 对应。Agg 模式统一 Worker 实体，模拟 SGLang make_batch 混合批调度。
 
@@ -245,7 +390,7 @@
 - `maxTokens` 使用 `kvGb` 而非 `kvGbD`
 - prefill 请求不可被 retract（GPU 正在计算中）
 
-### `src/sim/LoadBalancer.ts`
+#### `src/sim/LoadBalancer.ts`
 
 | HTML 行号 | HTML 内容 | TS 对应 |
 |---|---|---|
@@ -255,7 +400,7 @@
 
 **注意**：LoadBalancer 在两种模式下均使用——pd-disagg 选 P/D 实例，agg 选 Worker 实例。
 
-### `src/sim/MetricsCollector.ts`
+#### `src/sim/MetricsCollector.ts`
 
 | HTML 行号 | HTML 内容 | TS 对应 |
 |---|---|---|
@@ -282,7 +427,7 @@
 | pd-disagg | 7 | `[tokenized-recv, bootstrapDone-tokenized, pQueueExit-bootstrapDone, prefillDone-pQueueExit, transferDone-prefillDone, dQueueExit-transferDone, firstToken-dQueueExit]` |
 | agg | 4 | `[tokenized-recv, wQueueExit-tokenized, wPrefillDone-wQueueExit, firstToken-wPrefillDone]` |
 
-### `src/sim/SimEngine.ts`
+#### `src/sim/SimEngine.ts`
 
 | HTML 行号 | HTML 内容 | TS 对应 |
 |---|---|---|
@@ -327,7 +472,7 @@
 - `mode === "agg"`：聚合所有 worker 的 `waitingQ.length`、`running.length`、`kvUsed`/`maxTokens`；pd-disagg gauge 全归零
 - 否则：原有逻辑不变；agg gauge 全归零
 
-### `src/sim/SimService.ts` (新增，agg 扩展)
+#### `src/sim/SimService.ts` (新增，agg 扩展)
 
 无 HTML 对应。封装 SimEngine 为独立 HTTP 服务。
 
@@ -353,17 +498,17 @@
 | `wList` | `[]` | WorkerInstance[]（含 `waitingQ`/`running`） |
 | 请求序列化 | `pIdx`, `dIdx`, `kvPoll`, `chunksQueued/Transferred` 等 | `wIdx`, `chunkOffset` |
 
-### `src/http/HttpService.ts` (新增)
+#### `src/http/HttpService.ts` (新增)
 
 无 HTML 对应。独立静态文件 HTTP 服务器：
 - 从项目根目录提供静态文件
 - `/api/*` 代理到 SimService（端口 3001）
 
-### `src/index.ts` (新增)
+#### `src/index.ts` (新增)
 
 无 HTML 对应。主入口，启动两个服务 + 优雅关闭。
 
-### `src/test/agg.test.ts` (新增)
+#### `src/test/agg.test.ts` (新增)
 
 无 HTML 对应。16 个验收测试用例，覆盖：
 
@@ -388,7 +533,7 @@
 
 ---
 
-## 3. 未迁移部分（保留在 HTML 中）
+### 6.3 未迁移部分（保留在 HTML 中）
 
 以下逻辑仍在 `pd-disagg.html` 中，属于浏览器端渲染/UI 层：
 
@@ -410,9 +555,9 @@
 
 ---
 
-## 4. 同步更新指南
+### 6.4 同步更新指南
 
-当 `pd-disagg.html` 更新后，按以下步骤同步 TS 代码：
+当根目录 `pd-disagg.html` 更新后，按以下步骤同步 TS 代码（**仅修改 `server/src/` 下 TS 文件，不修改 HTML**）：
 
 1. **定位变更区域**：在 HTML 中找到修改的行号范围
 2. **查上表**：确定对应的 TS 文件
@@ -420,7 +565,7 @@
 4. **检查编译**：确保 TypeScript strict 模式零错误
 5. **模式感知**：如果改动涉及 pd-disagg 专有逻辑，检查是否需要在 agg 模式添加对应逻辑或显式归零
 
-### 最常需同步的文件
+#### 最常需同步的文件
 
 | 修改场景 | 需同步的 TS 文件 |
 |---|---|

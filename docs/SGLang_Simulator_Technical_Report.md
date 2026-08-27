@@ -89,6 +89,8 @@ class Req:
         # complete_one() 需要直接修改 device_len
         self.device_len = len(self.input_ids)       # 当前在设备上的总长度
         self.max_device_len = len(self.input_ids) + self.output_len  # 最大设备长度（初始化时固定，不随 append_host 增长）
+        # DP rank 分配（§10.3.3，默认 0 = 单实例无 DP）
+        self.dp_rank: int = 0
         # 注意：使用 <= 而非 <，允许全缓存命中（cached_len == device_len，extend_len=0）的情况
         assert 0 <= self.cached_len <= self.device_len <= self.max_device_len
 
@@ -800,15 +802,72 @@ class MockZmqQueue:
     def __init__(self):
         self._queue = queue.Queue()
     def put(self, msg): self._queue.put(msg)
-    def get(self, blocking=True): 
+    def get(self, blocking=True):
         return self._queue.get(block=blocking)
     def empty(self): return self._queue.empty()
 
-class MockTPGroup:
-    """模拟 TP 通信组，单进程"""
-    def barrier(self): pass
-    def broadcast(self, tensor, root): return tensor
-    def all_reduce(self, tensor, op): return tensor
+
+class SimCommGroup:
+    """通用并行通信组仿真，支持 TP all-reduce / EP all-to-all / PP p2p。
+    替代原 MockTPGroup（noop），引入通信成本模型。
+
+    成本模型：cost = latency + data_bytes / bandwidth
+    data_bytes 由调用方传入（tensor 大小估算），config 提供带宽参数。
+    仿真中不实际传输数据，只记录成本 ticks。
+    """
+    def __init__(self, group_size: int, config: 'SimulatorConfig',
+                 group_type: str = "tp"):
+        """group_type: "tp" | "ep" | "pp" — 决定使用哪组成本参数"""
+        self.group_size = group_size
+        self.config = config
+        self.group_type = group_type
+        self.comm_ticks_log: List[int] = []  # 通信成本记录（供指标收集）
+
+    def _compute_cost(self, data_bytes: int) -> int:
+        """计算通信成本 ticks = latency + data_bytes / bandwidth"""
+        if self.group_type == "tp":
+            latency = self.config.all_reduce_latency_ticks
+            per_byte = self.config.all_reduce_cost_per_byte_ticks
+        elif self.group_type == "ep":
+            latency = self.config.all_to_all_latency_ticks
+            per_byte = self.config.all_to_all_cost_per_byte_ticks
+        else:  # pp
+            latency = 0
+            per_byte = self.config.pp_send_recv_cost_per_byte_ticks
+        bw = self.config.comm_bandwidth_bytes_per_tick
+        transfer_ticks = int(data_bytes / max(1, bw)) if bw > 0 else 0
+        cost = latency + int(data_bytes * per_byte) + transfer_ticks
+        self.comm_ticks_log.append(cost)
+        return cost
+
+    def all_reduce(self, data_bytes: int) -> int:
+        """TP all-reduce：返回通信成本 ticks（仿真中不传输数据）"""
+        assert self.group_type == "tp"
+        return self._compute_cost(data_bytes)
+
+    def all_to_all(self, data_bytes: int) -> int:
+        """EP all-to-all：返回通信成本 ticks"""
+        assert self.group_type == "ep"
+        return self._compute_cost(data_bytes)
+
+    def send_recv(self, data_bytes: int) -> int:
+        """PP stage 间 p2p：返回通信成本 ticks"""
+        assert self.group_type == "pp"
+        return self._compute_cost(data_bytes)
+
+    def barrier(self) -> None:
+        """同步屏障（仿真中为 noop，不产生成本）"""
+        pass
+
+
+# 兼容旧代码：MockTPGroup 保留为 SimCommGroup 的薄包装
+class MockTPGroup(SimCommGroup):
+    """向后兼容：tp_size=1 时等价于原 noop 行为"""
+    def __init__(self):
+        super().__init__(group_size=1, config=None, group_type="tp")  # type: ignore
+    def all_reduce(self, data_bytes: int = 0) -> int:  # type: ignore
+        return 0  # tp_size=1 时无通信成本
+    def broadcast(self, tensor, root): return tensor  # 保留旧接口
 ```
 
 #### 3.4.5 MockAttnBackend
@@ -823,23 +882,81 @@ class MockAttnBackend(BaseAttnBackend):
     # forward_extend / forward_decode 不需要实现，因为 model.forward 是 mock
 ```
 
-#### 3.4.5b MockMoeBackend
+#### 3.4.5b SimMoeBackend (EP-aware)
 
 ```python
-class MockMoeBackend(BaseMoeBackend):
-    """模拟 MoE backend，不执行路由计算，只记录调用次数和 token 数量"""
-    def __init__(self):
+class SimMoeBackend(BaseMoeBackend):
+    """模拟 MoE backend，支持 EP 专家分布仿真。
+    ep_size=1 时退化为 MockMoeBackend（无通信）。
+
+    EP 仿真要点：
+    1. 专家按 ep_size 分片，每个 EP rank 持有 num_experts/ep_size 个专家
+    2. forward 时执行 all-to-all 通信将 token 发送到目标专家所在 rank
+    3. 计算后执行 all-to-all 反向通信收集结果
+    4. 仿真中不实际传输数据，只计算通信成本 ticks
+    """
+    def __init__(self, model_config: 'ModelConfig', ep_size: int = 1,
+                 comm_group: 'SimCommGroup | None' = None,
+                 dtype_size: int = 2):
+        self.model_config = model_config
+        self.ep_size = ep_size
+        self.comm_group = comm_group  # group_type="ep" 的 SimCommGroup
+        self.dtype_size = dtype_size
         self.call_count = 0
         self.total_tokens = 0
+        self.comm_ticks_total = 0
 
-    def prepare_metadata(self, batch: Batch):
+        # 专家分布：每个 EP rank 持有的专家索引范围
+        if ep_size > 1:
+            self.experts_per_rank = div_even(
+                model_config.num_experts, ep_size, allow_replicate=False
+            )
+            self.local_expert_start = sum(self.experts_per_rank[:0])  # rank 0
+            self.local_expert_count = self.experts_per_rank[0]
+        else:
+            self.experts_per_rank = [model_config.num_experts]
+            self.local_expert_start = 0
+            self.local_expert_count = model_config.num_experts
+
+    def prepare_metadata(self, batch: 'Batch'):
         """记录 token 数量用于指标收集"""
         self.call_count += 1
         self.total_tokens += batch.size
 
-    def forward(self, hidden_states):
-        """Mock forward：直接返回输入（不做路由）"""
-        return hidden_states
+    def forward(self, hidden_states, batch_size: int) -> Tuple[Any, int]:
+        """Mock forward + EP 通信成本计算。
+        返回 (hidden_states, comm_cost_ticks)。
+        """
+        self.prepare_metadata_type(batch_size)  # 记录指标
+
+        comm_cost = 0
+        if self.ep_size > 1 and self.comm_group is not None:
+            # all-to-all：发送 hidden_states 到目标 EP rank
+            # 数据量 = batch_size × hidden_size × dtype_size（每个 token 的 hidden）
+            data_bytes = (batch_size * self.model_config.hidden_size * self.dtype_size)
+            comm_cost += self.comm_group.all_to_all(data_bytes)
+            # 反向 all-to-all：收集结果
+            comm_cost += self.comm_group.all_to_all(data_bytes)
+
+        return hidden_states, comm_cost
+
+    def prepare_metadata_type(self, batch_size: int):
+        """内部：记录调用"""
+        self.call_count += 1
+        self.total_tokens += batch_size
+
+
+# 向后兼容
+class MockMoeBackend(SimMoeBackend):
+    """旧接口兼容：ep_size=1，无通信"""
+    def __init__(self):
+        super().__init__(
+            model_config=None,  # type: ignore
+            ep_size=1,
+            comm_group=None,
+        )
+    def forward(self, hidden_states, batch_size: int = 0) -> Tuple[Any, int]:  # type: ignore
+        return hidden_states, 0
 ```
 
 ---
@@ -878,12 +995,20 @@ sglang_simulator/
 │   └── config.py              # EngineConfig
 ├── memory/                    # 内存预算（仿真）
 │   ├── __init__.py
-│   └── budget.py              # 显存预算计算
+│   └── budget.py              # 显存预算计算（含 TP/DP 并行修正）
+├── parallel/                  # 并行仿真（§10）
+│   ├── __init__.py
+│   ├── topology.py            # ParallelTopology（rank 映射、层分割）
+│   ├── comm_group.py          # SimCommGroup（TP/EP/PP 通信成本）
+│   ├── tp.py                  # TPSimulator（all-reduce 注入、内存修正）
+│   ├── dp.py                 # DPLoadBalancer + DPRankState（请求分发）
+│   ├── pp.py                 # PPPipelineSimulator（1F1B/GPipe/interleaved）
+│   └── validate.ts           # validate_parallel_config（启动时验证）
 ├── mock/                      # 模拟组件
 │   ├── __init__.py
 │   ├── attention.py           # MockAttnBackend
-│   ├── moe.py                 # MockMoeBackend
-│   ├── communication.py      # MockZmqQueue, MockTPGroup
+│   ├── moe.py                 # SimMoeBackend（EP-aware，§3.4.5b）
+│   ├── communication.py      # MockZmqQueue, SimCommGroup（§3.4.4）
 │   └── model.py               # MockModel.forward
 ├── server/                    # API Server（模拟）
 │   ├── __init__.py
@@ -938,8 +1063,42 @@ class SimulatorConfig:
     cpu_schedule_cost_ticks: int = 1    # CPU ticks per scheduling
     cpu_process_result_cost_ticks: int = 1  # CPU ticks per result processing
 
-    # ===== TP 配置 =====
+    # ===== TP 张量并行配置 =====
     tp_size: int = 1
+    all_reduce_cost_per_byte_ticks: float = 0.001  # 每 byte all-reduce 耗费 ticks
+    all_reduce_latency_ticks: int = 2              # all-reduce 固定延迟
+    # TP 通信基础设施（仿真为成本参数，实际为 gloo/nccl/pynccl）
+    tp_cpu_group_type: str = "gloo"   # CPU 侧：barrier/broadcast
+    tp_gpu_group_type: str = "nccl"    # GPU 侧：all-reduce（pynccl 为异步版）
+
+    # ===== DP 数据并行配置 =====
+    dp_size: int = 1
+    # 标准 DP 请求分发策略（DataParallelController）
+    dp_load_balance_strategy: str = "round_robin"  # "round_robin" | "shortest_queue"
+    # DP Attention 模式（MLA 模型专用，与标准 DP 不同）
+    enable_dp_attention: bool = False  # 开启后 attention 层 DP，MLP 层大 TP 组
+    dp_attention_all_gather_cost_per_byte_ticks: float = 0.0015
+
+    # ===== EP 专家并行配置 =====
+    ep_size: int = 1                # EP size（MoE 部分 TP rank 重编号，不增加进程数）
+    all_to_all_cost_per_byte_ticks: float = 0.002   # 每 byte all-to-all 耗费 ticks
+    all_to_all_latency_ticks: int = 3               # all-to-all 固定延迟
+    moe_routing_mode: str = "mock"                  # "mock" | "hash" | "simulated"
+    enable_eplb: bool = False        # 是否启用动态专家负载均衡（eplb）
+
+    # ===== CP Context Parallel 配置 =====
+    cp_size: int = 1                 # CP size（attention 序列切分，TP rank 重编号）
+    cp_all_gather_cost_per_byte_ticks: float = 0.001  # 每 byte all-gather 成本
+
+    # ===== PP 流水并行配置 =====
+    pp_size: int = 1
+    pp_num_micro_batches: int = 1                   # 每个 pipeline batch 的 micro-batch 数
+    pp_send_recv_cost_per_byte_ticks: float = 0.0005  # stage 间 p2p 通信成本
+    pp_pipeline_schedule: str = "1f1b"              # "1f1b" | "gpipe" | "interleaved"
+
+    # ===== 通信成本通用配置 =====
+    comm_bandwidth_bytes_per_tick: int = 1_000_000  # 模拟互联带宽（bytes/tick）
+    comm_overlap_with_compute: bool = True           # 通信是否可与计算重叠
 
     # ===== 离线模式（不启动 server，直接调用 scheduler）=====
     offline_mode: bool = False
@@ -968,11 +1127,105 @@ class ModelConfig:
     is_moe: bool = False
     num_experts: int = 0              # MoE only
     moe_intermediate_size: int = 0    # MoE only
+    moe_top_k: int = 1                # MoE 每个 token 选择的专家数
     intermediate_size: int = 0       # dense MLP
     num_attention_heads: int = 0
     rms_norm_eps: float = 1e-6
     rope_theta: float = 10000.0
     max_position_embeddings: int = 8192
+
+
+@dataclass
+class ParallelTopology:
+    """并行拓扑配置，描述 TP×DP×PP 进程网格。
+
+    重要：SGLang 的实际进程数 = tp_size × dp_size × pp_size。
+    EP 和 CP 不增加进程数，而是在已有 TP rank 上重新划分 rank：
+    - CP：在 TP 组内再切 attention 序列（attn_cp_size 是 tp_size 的子划分）
+    - EP：在 MoE 部分重排 TP rank 为 moe_dp/moe_ep/moe_tp 三层
+    参见 sglang-note《scheduler-rank-and-process-topology》§三。
+
+    仿真中为简化，将 EP/CP 视为通信成本参数（不影响进程数）。
+    """
+    tp_size: int = 1
+    dp_size: int = 1
+    ep_size: int = 1       # MoE EP（TP rank 重编号，不增加进程数）
+    pp_size: int = 1
+    cp_size: int = 1       # Context Parallel（TP rank 重编号，不增加进程数）
+    enable_dp_attention: bool = False  # DP Attention 模式（与标准 DP 不同）
+
+    @property
+    def world_size(self) -> int:
+        """总进程数 = tp × dp × pp（EP/CP 不增加进程数）"""
+        return self.tp_size * self.dp_size * self.pp_size
+
+    @property
+    def num_dp_groups(self) -> int:
+        """DP 组数 = tp × pp（每个 DP 副本内的进程数）"""
+        return self.tp_size * self.pp_size
+
+    @property
+    def num_pp_stages(self) -> int:
+        """PP stage 数 = pp_size"""
+        return self.pp_size
+
+    def rank_to_coord(self, rank: int) -> Tuple[int, int, int]:
+        """将线性 rank 映射到 (tp_idx, dp_idx, pp_idx) 三元组。
+        排序：tp 在最内层，dp 居中，pp 在最外层。
+        gpu_id 公式（单机）：dp_rank * (tp_size * pp_size) + pp_rank * tp_size + tp_rank
+        """
+        assert 0 <= rank < self.world_size
+        tp_idx = rank % self.tp_size
+        remain = rank // self.tp_size
+        dp_idx = remain % self.dp_size
+        pp_idx = remain // self.dp_size
+        return (tp_idx, dp_idx, pp_idx)
+
+    def coord_to_rank(self, tp_idx: int, dp_idx: int, pp_idx: int) -> int:
+        """将 (tp_idx, dp_idx, pp_idx) 映射回线性 rank"""
+        return (
+            pp_idx * (self.dp_size * self.tp_size)
+            + dp_idx * self.tp_size
+            + tp_idx
+        )
+
+    def compute_moe_ranks(self, tp_rank: int) -> Tuple[int, int, int]:
+        """从 tp_rank 推导 MoE 层级的 (moe_dp_rank, moe_ep_rank, moe_tp_rank)。
+        层级：Global(TP) → MOE_DP → EP → MOE_TP
+        对应 SGLang 源码 _compute_parallelism_ranks。
+        """
+        moe_dp_size = self.dp_size  # 简化：moe_dp = dp
+        moe_tp_size = max(1, self.tp_size // moe_dp_size // self.ep_size)
+        moe_dp_rank = tp_rank // (self.tp_size // moe_dp_size) if moe_dp_size > 0 else 0
+        moe_ep_rank = (
+            (tp_rank % (self.tp_size // moe_dp_size))
+            // moe_tp_size
+        ) if self.ep_size > 0 and moe_tp_size > 0 else 0
+        moe_tp_rank = tp_rank % moe_tp_size if moe_tp_size > 0 else 0
+        return (moe_dp_rank, moe_ep_rank, moe_tp_rank)
+
+    def compute_attn_ranks(self, tp_rank: int) -> Tuple[int, int]:
+        """从 tp_rank 推导 Attention 层级的 (attn_cp_rank, attn_tp_rank)。
+        层级：Global(TP) → ATTN_DP → ATTN_CP → ATTN_TP
+        attn_tp_size = tp_size / attn_dp_size / attn_cp_size
+        """
+        attn_dp_size = self.dp_size if self.enable_dp_attention else 1
+        attn_tp_size = max(1, self.tp_size // attn_dp_size // self.cp_size)
+        attn_cp_rank = (tp_rank // attn_tp_size) % self.cp_size if self.cp_size > 0 else 0
+        attn_tp_rank = tp_rank % attn_tp_size
+        return (attn_cp_rank, attn_tp_rank)
+
+    def pp_stage_layers(self, num_layers: int) -> List[range]:
+        """将 num_layers 按 pp_size 均分到各 stage，返回每个 stage 的层范围列表"""
+        base = num_layers // self.pp_size
+        remainder = num_layers % self.pp_size
+        result: List[range] = []
+        offset = 0
+        for i in range(self.pp_size):
+            count = base + (1 if i < remainder else 0)
+            result.append(range(offset, offset + count))
+            offset += count
+        return result
 ```
 
 ### 4.3 时序仿真模型
@@ -1162,6 +1415,20 @@ class SimulationMetrics:
 3. `benchmark/metrics.py` — 性能指标收集
 4. `server/` — 简化版 API server
 
+**Phase 5: 并行仿真（TP/DP/EP/PP）** — 见 §10 完整规格
+1. `parallel/topology.py` — ParallelTopology（rank 映射、层分割）
+2. `parallel/comm_group.py` — SimCommGroup（替换 MockTPGroup，§3.4.4）
+3. `parallel/tp.py` — TPSimulator（all-reduce 注入、内存修正，§10.2）
+4. `parallel/dp.py` — DPLoadBalancer + DPRankState（§10.3）
+5. `mock/moe.py` — SimMoeBackend（升级 MockMoeBackend，§3.4.5b + §10.4）
+6. `parallel/pp.py` — PPPipelineSimulator（§10.5）
+7. `parallel/validate.ts` — validate_parallel_config + calculate_memory_budget_parallel（§10.6）
+8. 更新 `MockEngine.forward_batch` 注入 TP/EP/PP 通信成本（§10.2.4, §10.4, §10.5.3）
+9. 更新 `SimScheduler.add_request` 注入 DP 请求分发（§10.3.3）
+10. 更新 `SimulationMetrics` 新增 ParallelMetrics（§10.7）
+
+> **Phase 5 前置依赖**：Phase 1-4 必须完成。Phase 5 的所有并行模块在 `tp_size=dp_size=ep_size=pp_size=1` 时 noop，不破坏 Phase 1-4 的单实例行为。
+
 ### 5.2 测试策略
 
 每个 Phase 完成后的验证点：
@@ -1178,6 +1445,13 @@ class SimulationMetrics:
 | 3 | Overlap vs non-overlap | overlap 模式 GPU 利用率更高 |
 | 4 | 不同工作负载下的吞吐量 | 高 arrival_rate 下 throughput 饱和 |
 | 4 | 内存预算限制 | num_pages 不足时正确触发 eviction 或拒绝新请求 |
+| 5 | TP all-reduce 通信成本 | TP>1 时 `tp_comm_ticks > 0`，TP=1 时为 0（§10.8.1） |
+| 5 | DP round_robin/least_load 分发 | 请求按策略分配到 DP rank（§10.8.2） |
+| 5 | EP 专家分片 + all-to-all | `experts_per_rank` 均匀，`ep_comm_ticks > 0`（§10.8.3） |
+| 5 | PP 流水线气泡 + send/recv | `pp_bubble_ticks > 0`，层按 pp_size 均分（§10.8.4） |
+| 5 | TP×DP×EP×PP 组合 | `comm_ticks_total = tp+ep+pp` 之和（§10.8.5） |
+| 5 | 退化为单实例 | 所有并行 size=1 时零通信成本（§10.9） |
+| 5 | 并行配置验证 | 非法配置（如 EP>num_experts）抛 ValueError（§10.6.3） |
 
 ### 5.3 关键实现细节
 
@@ -1301,15 +1575,19 @@ def evict(self, size: int) -> List[int]:
 
 以下模块可在核心模拟器完成后按需添加：
 
-| 模块 | 仿真难度 | 价值 |
-|------|---------|------|
-| Speculative Decoding | 中 | draft model 预测 N token，target model 验证，KV cache 处理 |
-| Constraint Decoding | 中 | X-Grammar PDA，与 GPU 计算重叠 |
-| DP Attention | 中 | MLA 模型避免 KV cache 复制，MoE 前 all-gather 后分发 |
-| Weight Update (RLHF) | 高 | online_update_weights，NCCL 广播，latency 优化 |
-| Multi-turn / Tool Calling | 高 | AgentLoop，请求状态机扩展 |
-| HiCache (SSD→DRAM→HBM) | 高 | 分层 KV cache，prefetch 机制 |
-| Chunked Prefill + Overlap | 中 | prefill 和 decode 混合 batch |
+| 模块 | 仿真难度 | 价值 | 状态 |
+|------|---------|------|------|
+| **TP 张量并行** | 中 | all-reduce 通信成本、权重/KV 分割、ZMQ 广播 + gloo/nccl 三层 | ✅ 已规格（§10.2, §10.6） |
+| **DP 数据并行** | 中 | 标准 DP（请求分发）+ DP Attention（MLA all-gather/slice） | ✅ 已规格（§10.3） |
+| **EP 专家并行** | 中 | MoE 专家分片、TP rank 重编号、all-to-all、EPLB | ✅ 已规格（§10.4） |
+| **PP 流水并行** | 高 | micro-batch 调度、最后 stage 采样、stage 间通信 | ✅ 已规格（§10.5） |
+| **CP Context Parallel** | 中 | 长序列切分、TP rank 重编号、KV all-gather | ✅ 已规格（§10.8） |
+| Speculative Decoding | 中 | draft model 预测 N token，target model 验证，KV cache 处理 | 待实现 |
+| Constraint Decoding | 中 | X-Grammar PDA，与 GPU 计算重叠 | 待实现 |
+| Weight Update (RLHF) | 高 | online_update_weights，NCCL 广播，latency 优化 | 待实现 |
+| Multi-turn / Tool Calling | 高 | AgentLoop，请求状态机扩展 | 待实现 |
+| HiCache (SSD→DRAM→HBM) | 高 | 分层 KV cache，prefetch 机制 | 待实现 |
+| Chunked Prefill + Overlap | 中 | prefill 和 decode 混合 batch | ✅ 已实现（§3.3.8, §9.4） |
 
 ### 6.2 可配置策略点
 
@@ -1325,6 +1603,12 @@ def evict(self, size: int) -> List[int]:
 | overlap scheduling | 启用 | 禁用 |
 | batch 调度顺序 | FIFO | SJF (最短作业优先) / 优先级 |
 | chunked prefill | 启用 | 禁用 / 自定义 chunk size |
+| DP 负载均衡 | round_robin | shortest_queue（§10.3） |
+| DP Attention | 禁用 | 启用（MLA 模型专用，§10.3.4） |
+| PP 流水线调度 | 1f1b | gpipe / interleaved（§10.5） |
+| MoE 路由模式 | mock | hash / simulated（§10.4） |
+| EPLB 动态负载均衡 | 禁用 | 启用（§10.4.4） |
+| CP Context Parallel | 禁用 | cp_size > 1（§10.8） |
 
 ---
 
@@ -1364,6 +1648,33 @@ def evict(self, size: int) -> List[int]:
 | MockKVCachePool | `store_kv(k, v, out_loc, layer_id)` | `List, List, List[int], int` | `void` |
 | MockAttnBackend | `prepare_metadata(batch)` | `Batch` | `void` |
 | MockZmqQueue | `put(msg)` / `get(blocking)` | `BaseBackendMsg` / `bool` | `void` / `BaseBackendMsg` |
+
+### 7.2b 并行仿真组件接口（§10）
+
+| 组件 | 核心方法 | 输入 | 输出 |
+|------|---------|------|------|
+| SimCommGroup | `all_reduce(data_bytes)` | `int` | `int` (ticks) |
+| SimCommGroup | `all_to_all(data_bytes)` | `int` | `int` (ticks) |
+| SimCommGroup | `send_recv(data_bytes)` | `int` | `int` (ticks) |
+| TPCommInfraSimulator | `zmq_broadcast(msg_size)` | `int` | `int` (ticks) |
+| TPCommInfraSimulator | `cpu_barrier()` | — | `int` (ticks) |
+| TPCommInfraSimulator | `gpu_all_reduce(data_bytes)` | `int` | `int` (ticks) |
+| TPSimulator | `all_reduce_after_attn(batch_size)` | `int` | `int` (ticks) |
+| TPSimulator | `all_reduce_after_mlp(batch_size)` | `int` | `int` (ticks) |
+| DataParallelController | `assign_request(req)` | `Req` | `int` (dp_rank) |
+| DataParallelController | `allocate_pages(dp_rank, n)` | `int, int` | `bool` |
+| DPAttentionSimulator | `simulate_mlp_forward(local_batch_sizes)` | `List[int]` | `int` (ticks) |
+| SimMoeBackend | `forward(hidden, batch_size)` | `Any, int` | `Tuple[Any, int]` |
+| SimMoeBackend | `_route_tokens(batch_size)` | `int` | `Dict[int, int]` |
+| EPLBSimulator | `step(rank_loads)` | `List[int]` | `int` (ticks) |
+| PPPipelineSimulator | `simulate_pipeline_forward(batch)` | `Batch` | `int` (ticks) |
+| CPSimulator | `simulate_attn_forward(seq_len)` | `int` | `int` (ticks) |
+| ParallelTopology | `rank_to_coord(rank)` | `int` | `Tuple[int,int,int]` (tp,dp,pp) |
+| ParallelTopology | `compute_moe_ranks(tp_rank)` | `int` | `Tuple[int,int,int]` (moe_dp,ep,moe_tp) |
+| ParallelTopology | `compute_attn_ranks(tp_rank)` | `int` | `Tuple[int,int]` (attn_cp,attn_tp) |
+| ParallelTopology | `pp_stage_layers(num_layers)` | `int` | `List[range]` |
+| validate_parallel_config | `(config, model_config)` | `SimulatorConfig, ModelConfig` | `void` (asserts) |
+| calculate_memory_budget_parallel | `(config, model_config, mem)` | `SimulatorConfig, ModelConfig, int` | `Tuple[int,int,int]` |
 
 ### 7.3 消息类型
 
@@ -3483,10 +3794,1186 @@ class SimulationMetrics:
 | **NaiveCache 页回收** | `insert_prefix` 返回 `NaiveCacheHandle(0)`，确保 `finished=True` 时 `_free(page_indices[0:])` 回收全部页 | §9.3b |
 | **内存预算为负（模型过大）** | `calculate_memory_budget` 使用 `max(0, ...)` 返回 0 页，`graph_buffer` 从 available 中扣除 | §3.3.9 |
 | **token_pool extend 部分未初始化** | `try_add_one` 和 `_try_add_one_chunked` 均复制 extend tokens 到 `token_pool`，确保 `batch.input_ids` 正确 | §9.11 PrefillAdder |
+| **并行 size 全为 1** | 所有并行模块 noop，`comm_ticks_total=0`，等价于纯单实例 | §10.11 |
+| **EP>1 但非 MoE 模型** | `validate_parallel_config` 抛 `ValueError`，启动即失败 | §10.7.3 |
+| **EP>tp_size** | `validate_parallel_config` 抛 `ValueError`（EP 是 TP rank 重编号，不能超过 tp_size） | §10.4.1, §10.7.3 |
+| **CP>tp_size** | `validate_parallel_config` 抛 `ValueError`（CP 是 TP rank 重编号） | §10.8.1, §10.7.3 |
+| **DP 副本页耗尽** | `allocate_pages` 返回 `False`，请求等待或被拒绝 | §10.3.2 |
+| **DP Attention + 非 MLA 模型** | `enable_dp_attention=True` 但 `num_kv_heads>1` 时发出 warning（DP Attention 专为 MLA 设计） | §10.3.4 |
+| **PP micro-batch size=0** | `_split_micro_batches` 跳过空 micro-batch，不产生通信成本 | §10.5.2 |
+| **PP 中间 stage 采样** | `is_pp_last=False` 时返回 `is_intermediate=True`，不调用 sampler | §10.5.3 |
+| **TP KV heads 不整除** | `div_even(allow_replicate=True)` 复制余数，发出 warning | §10.7.3 |
+| **CUDA Graph + 并行** | CUDA Graph replay 路径跳过 TP/PP 通信仿真（graph 内已固化） | §10.2.4, §10.5.3 |
+| **EPLB 负载均衡触发** | `enable_eplb=True` 且负载方差 > 均值 10% 时，`step()` 返回重平衡成本 | §10.4.4 |
+| **ZMQ 广播成本** | TP>1 时 primary rank 的 ZMQ 广播成本计入 `zmq_broadcast_ticks` | §10.6.1 |
 
 ---
 
-## 10. 总结
+## 10. 并行仿真扩展（TP/DP/EP/PP 完整规格）
+
+本章描述 TP/DP/EP/PP 四种并行策略在仿真器中的完整规格。前序章节已定义基础设施（§4.2 `SimulatorConfig`/`ParallelTopology`、§3.4.4 `SimCommGroup`、§3.4.5b `SimMoeBackend`），本章定义**仿真流程集成**——即各并行策略如何与单实例 `SimScheduler`/`MockEngine` 的 forward 路径交互、通信成本注入点、多 rank 协调逻辑、以及指标收集。
+
+### 10.1 设计原则与架构映射
+
+| 原则 | 说明 |
+|------|------|
+| **单实例调度器不变** | `SimScheduler` 仍为单实例，所有并行逻辑在 `MockEngine.forward_batch` 和 `SimModelForward` 中注入 |
+| **通信成本仿真** | 不实际传输数据，只通过 `SimCommGroup` 计算通信 ticks 并累加到 GPU busy ticks |
+| **内存分割** | TP/EP/PP 各自影响显存预算：TP 分割权重+KV、EP 分割专家、PP 分割层 |
+| **多 rank 逻辑折叠** | 仿真器不模拟多个进程，而是将多 rank 行为折叠为单进程内的通信成本 + 状态记录 |
+| **零运行时依赖** | 不依赖 NCCL/MPI，通信成本纯计算 |
+| **退化为单实例** | `tp_size=dp_size=ep_size=pp_size=1` 时，所有并行模块 noop，与 §3 核心仿真完全一致 |
+
+**与 SGLang 真实架构对应**：
+
+```
+SGLang 真实多 rank                    仿真器单进程
+┌─────────────────────────┐          ┌────────────────────────────┐
+│ Scheduler rank 0         │          │ SimScheduler (单实例)        │
+│  ├─ TP group [0..tp-1]   │  ──→     │  ├─ SimCommGroup("tp")     │
+│  ├─ DP group [0..dp-1]   │  ──→     │  ├─ DPLoadBalancer           │
+│  ├─ EP group [0..ep-1]   │  ──→     │  ├─ SimMoeBackend           │
+│  └─ PP stage [0..pp-1]   │  ──→     │  └─ PPPipelineSimulator     │
+└─────────────────────────┘          └────────────────────────────┘
+```
+
+### 10.2 TP 张量并行仿真
+
+#### 10.2.1 仿真目标
+
+从 `MockTPGroup`（noop）升级为真实通信成本仿真，覆盖：
+1. **权重分割**：`num_attention_heads` / `tp_size`、`intermediate_size` / `tp_size`、KV heads `div_even(num_kv_heads, tp_size)`
+2. **all-reduce 注入**：每个 TP-grouped 算子后注入 all-reduce 成本
+3. **内存预算修正**：权重内存 ÷ `tp_size`，KV cache 头数 ÷ `tp_size`
+
+#### 10.2.2 TP 通信组与内存修正
+
+```python
+class TPSimulator:
+    """TP 张量并行仿真器，封装通信组与内存修正逻辑。
+    由 MockEngine 持有，在 forward 路径中调用。
+    tp_size=1 时所有方法 noop（成本为 0）。
+    """
+    def __init__(self, config: 'SimulatorConfig', model_config: 'ModelConfig'):
+        self.config = config
+        self.model_config = model_config
+        self.tp_size = config.tp_size
+        self.comm_group = SimCommGroup(
+            group_size=config.tp_size,
+            config=config,
+            group_type="tp",
+        )
+        # 内存修正：本地（单 rank）可见的参数量
+        if self.tp_size > 1:
+            self.local_num_heads = self._div_heads(model_config.num_attention_heads)
+            self.local_num_kv_heads = self._div_heads(model_config.num_kv_heads)
+            self.local_intermediate = model_config.intermediate_size // self.tp_size
+        else:
+            self.local_num_heads = model_config.num_attention_heads
+            self.local_num_kv_heads = model_config.num_kv_heads
+            self.local_intermediate = model_config.intermediate_size
+
+    def _div_heads(self, total_heads: int) -> int:
+        """TP 下 attention heads 分割，使用 div_even 保证均衡"""
+        result = div_even(total_heads, self.tp_size, allow_replicate=False)
+        return result[0]  # rank 0 视角
+
+    def all_reduce_after_attn(self, batch_size: int) -> int:
+        """attention 后 all-reduce。数据量 = batch × hidden × dtype。"""
+        if self.tp_size <= 1:
+            return 0
+        data_bytes = batch_size * self.model_config.hidden_size * self.config.dtype_size
+        return self.comm_group.all_reduce(data_bytes)
+
+    def all_reduce_after_mlp(self, batch_size: int) -> int:
+        """MLP 后 all-reduce。数据量 = batch × hidden × dtype。"""
+        if self.tp_size <= 1:
+            return 0
+        data_bytes = batch_size * self.model_config.hidden_size * self.config.dtype_size
+        return self.comm_group.all_reduce(data_bytes)
+
+    def total_comm_ticks(self) -> int:
+        return sum(self.comm_group.comm_ticks_log)
+```
+
+#### 10.2.3 TP 内存预算修正
+
+`calculate_memory_budget`（§3.3.9）需在 TP>1 时修正权重内存：
+
+```python
+def calculate_memory_budget_with_tp(
+    config: 'SimulatorConfig',
+    model_config: 'ModelConfig',
+    total_gpu_memory: int,
+) -> Tuple[int, int, int]:
+    """TP-aware 内存预算。
+    权重内存 ÷ tp_size（每个 rank 只需持有 1/tp 的权重）。
+    KV cache 头数 ÷ tp_size（每个 rank 只需持有 1/tp 的 KV heads）。
+    """
+    tp = config.tp_size
+    # 权重内存（修正：每个 TP rank 只需 1/tp 的权重）
+    weight_bytes = _estimate_weight_bytes(model_config) // tp
+    # 非权重视为常量
+    non_weight_bytes = _estimate_non_weight_bytes(model_config)
+    # 可用于 KV cache 的内存
+    available = int(total_gpu_memory * config.memory_ratio)
+    kv_budget = max(0, available - weight_bytes - non_weight_bytes)
+    # 每 token 每 layer 的 KV bytes（修正：头数 ÷ tp）
+    local_kv_heads = div_even(model_config.num_kv_heads, tp, allow_replicate=False)[0]
+    bytes_per_token_per_layer = (
+        2 * local_kv_heads * model_config.head_dim * config.dtype_size
+    )
+    bytes_per_token = bytes_per_token_per_layer * model_config.num_layers
+    num_tokens = kv_budget // max(1, bytes_per_token)
+    num_pages = num_tokens // config.page_size
+    graph_buffer = _calc_graph_buffer(config)
+    num_pages = max(0, num_pages - graph_buffer)
+    return num_pages, num_tokens, kv_budget
+```
+
+#### 10.2.4 TP 仿真流程（forward 路径集成）
+
+```python
+class MockEngine:
+    # ... 已有初始化 ...
+    def __init__(self, config, model_config):
+        # ... 原有初始化 ...
+        self.tp_sim = TPSimulator(config, model_config)
+
+    def forward_batch(self, batch: Batch, args: BatchSamplingArgs) -> ForwardOutput:
+        """TP 通信成本注入到 forward 路径"""
+        with self.ctx.forward_batch(batch):
+            if self.graph_runner.can_use_cuda_graph(batch):
+                logits = self.graph_runner.replay(batch)
+                tp_comm = self.tp_sim.total_comm_ticks()  # graph 内已记录
+            else:
+                logits, tp_comm = self._mock_model_forward_with_tp(batch)
+
+        # 通信成本累加到 GPU busy ticks（通过 metrics）
+        if tp_comm > 0:
+            self.metrics.comm_ticks_total += tp_comm
+            self.metrics.tp_comm_ticks += tp_comm
+        # ... 采样逻辑不变 ...
+
+    def _mock_model_forward_with_tp(self, batch: Batch) -> Tuple[List[List[float]], int]:
+        """逐层 forward，每层注入 TP 通信成本"""
+        total_comm = 0
+        for _ in range(self.model_config.num_layers):
+            total_comm += self.tp_sim.all_reduce_after_attn(batch.size)
+            if self.model_config.is_moe and self.moe_backend is not None:
+                hs, moe_comm = self.moe_backend.forward(None, batch.size)
+                total_comm += moe_comm
+            else:
+                total_comm += self.tp_sim.all_reduce_after_mlp(batch.size)
+        logits = self._mock_model_forward(batch)
+        return logits, total_comm
+```
+
+#### 10.2.5 TP 指标
+
+`SimulationMetrics` 新增字段：
+
+```python
+class SimulationMetrics:
+    # ... 已有字段 ...
+    tp_comm_ticks: int = 0           # TP all-reduce 总成本
+    tp_all_reduce_count: int = 0      # all-reduce 调用次数
+```
+
+### 10.3 DP 数据并行仿真
+
+#### 10.3.1 两种 DP 模式
+
+SGLang 有**两种完全不同的 DP 模式**，仿真器必须分别覆盖：
+
+| 模式 | 触发条件 | 核心机制 | 通信 |
+|------|----------|----------|------|
+| **标准 DP** (`DataParallelController`) | `dp_size > 1` | 请求分发到各 DP 副本，各自独立调度 | 无 NCCL（各副本独立） |
+| **DP Attention** (`enable_dp_attention=True`) | MLA 模型 + `dp_size > 1` | Attention 层 DP（每 rank 独立 KV），MLP/MoE 层大 TP 组 | all-gather/slice 每 layer |
+
+**关键区别**（参见 Awesome-ML-SYS-Tutorial `dp-attention/readme.md`）：
+- 标准 DP：各副本完全独立，通过 `DataParallelController` 用 ZMQ 分发请求
+- DP Attention：同一进程组内，Attention 层用 `ReplicatedLinear`（每 DP rank 持有全量 attention 权重），MLP 层用 `all_gather → forward → slice` 模式
+
+#### 10.3.2 标准 DP — 请求分发器
+
+```python
+class DPRankState:
+    """单个 DP 副本的状态"""
+    def __init__(self, rank: int, num_pages: int, page_size: int):
+        self.rank = rank
+        self.num_pages = num_pages
+        self.page_size = page_size
+        self.used_pages = 0
+        self.running_reqs: List[int] = []
+        self.queue_len: int = 0  # waiting_queue 长度（shortest_queue 策略用）
+
+    @property
+    def load(self) -> int:
+        """当前负载 = 已用页数 + 队列长度"""
+        return self.used_pages + self.queue_len
+
+
+class DataParallelController:
+    """标准 DP 请求分发器（对应 SGLang DataParallelController）。
+    通过 ZMQ 与各 DP 副本的 scheduler 通信。
+    策略：round_robin / shortest_queue（对应 SGLang 源码）。
+    dp_size=1 时所有请求分配到 rank 0（等价于无 DP）。
+    """
+    def __init__(self, config: 'SimulatorConfig', total_num_pages: int):
+        self.config = config
+        self.dp_size = config.dp_size
+        self.strategy = config.dp_load_balance_strategy  # "round_robin" | "shortest_queue"
+        self.round_robin_idx = 0
+        pages_per_rank = div_even(total_num_pages, self.dp_size, allow_replicate=False)
+        self.ranks: List[DPRankState] = [
+            DPRankState(i, pages_per_rank[i], config.page_size)
+            for i in range(self.dp_size)
+        ]
+
+    def assign_request(self, req: 'Req') -> int:
+        """为新请求分配 DP 副本，返回 rank 索引"""
+        if self.dp_size <= 1:
+            return 0
+        if self.strategy == "round_robin":
+            rank = self.round_robin_idx % self.dp_size
+            self.round_robin_idx += 1
+        elif self.strategy == "shortest_queue":
+            # 选择队列最短的副本（对应 SGLang shortest_queue 策略）
+            rank = min(range(self.dp_size), key=lambda i: self.ranks[i].load)
+        else:
+            raise ValueError(f"Unknown DP strategy: {self.strategy}")
+        self.ranks[rank].running_reqs.append(req.uid)
+        req.dp_rank = rank
+        return rank
+
+    def release_request(self, req: 'Req') -> None:
+        """请求完成时从 DP 副本移除"""
+        if self.dp_size <= 1:
+            return
+        rank = getattr(req, 'dp_rank', 0)
+        if rank < len(self.ranks):
+            self.ranks[rank].running_reqs = [
+                uid for uid in self.ranks[rank].running_reqs if uid != req.uid
+            ]
+
+    def allocate_pages(self, dp_rank: int, num_pages: int) -> bool:
+        rank_state = self.ranks[dp_rank]
+        if rank_state.used_pages + num_pages > rank_state.num_pages:
+            return False
+        rank_state.used_pages += num_pages
+        return True
+
+    def free_pages(self, dp_rank: int, num_pages: int) -> None:
+        rank_state = self.ranks[dp_rank]
+        rank_state.used_pages = max(0, rank_state.used_pages - num_pages)
+```
+
+#### 10.3.3 标准 DP 与调度器集成
+
+```python
+class SimScheduler:
+    def __init__(self, config, model_config):
+        # ... 原有初始化 ...
+        self.dp_controller = DataParallelController(config, self.num_pages)
+
+    def add_request(self, req: Req) -> None:
+        """添加请求时分配 DP 副本"""
+        dp_rank = self.dp_controller.assign_request(req)
+        req.dp_rank = dp_rank
+        self.waiting_queue.append(req)
+
+    def _free_request_resources(self, req: Req) -> None:
+        """释放请求资源时同时释放 DP 副本资源"""
+        self.dp_controller.release_request(req)
+        self.cache_manager.free_req(req)
+```
+
+#### 10.3.4 DP Attention 仿真（MLA 模型专用）
+
+当 `enable_dp_attention=True` 时，仿真 MLA 模型的 DP Attention 机制。
+
+**核心机制**（参见 `dp-attention/readme.md`）：
+1. Attention 层：每个 DP rank 独立处理自己的请求子集，KV cache 不复制（各 rank 独立）
+2. MLP/MoE 层：所有 DP rank 的 hidden_states **all-gather** 成一个完整 batch → forward → **slice** 回各 rank
+3. 非 MLP 层的 TP size = 1（每个 DP rank 内），MLP 层的 TP size = dp_size（大 TP 组）
+
+```python
+class DPAttentionSimulator:
+    """DP Attention 仿真器（MLA 模型专用）。
+    对应 SGLang 的 enable_dp_attention 机制。
+
+    仿真要点：
+    1. Attention 层不通信（每 rank 独立 KV cache）
+    2. MLP/MoE 层前后插入 all-gather / slice 通信成本
+    3. global_num_tokens = sum(各 DP rank 的 batch_size)
+    4. 数据流：local_hidden → all_gather → global_hidden → MLP → slice → local_hidden
+    """
+    def __init__(self, config: 'SimulatorConfig', model_config: 'ModelConfig'):
+        self.config = config
+        self.model_config = model_config
+        self.dp_size = config.dp_size if config.enable_dp_attention else 1
+        # all-gather 通信组（group_type="dp_attn"）
+        self.comm_group = SimCommGroup(
+            group_size=self.dp_size,
+            config=config,
+            group_type="dp_attn",
+        ) if self.dp_size > 1 else None
+        self.total_comm_ticks = 0
+
+    def simulate_mlp_forward(self, local_batch_sizes: List[int]) -> int:
+        """仿真 MLP 层的 all-gather → forward → slice 通信成本。
+        local_batch_sizes: 各 DP rank 的本地 batch_size 列表。
+        返回通信成本 ticks。
+        """
+        if self.dp_size <= 1 or self.comm_group is None:
+            return 0
+        # all-gather: 各 rank 的 hidden_states 汇聚
+        # 数据量 = sum(local_batch_sizes) × hidden_size × dtype_size
+        total_tokens = sum(local_batch_sizes)
+        gather_bytes = total_tokens * self.model_config.hidden_size * self.config.dtype_size
+        # all-gather 成本（用 _compute_cost 中的 dp_attn 参数）
+        gather_cost = self.comm_group._compute_cost(gather_bytes)
+        # slice 不产生通信成本（本地切片）
+        self.total_comm_ticks += gather_cost
+        return gather_cost
+
+
+# SimCommGroup 扩展：支持 dp_attn group_type
+# 在 §3.4.4 SimCommGroup._compute_cost 中追加：
+#   elif self.group_type == "dp_attn":
+#       latency = self.config.all_reduce_latency_ticks
+#       per_byte = self.config.dp_attention_all_gather_cost_per_byte_ticks
+```
+
+#### 10.3.5 DP 内存预算修正
+
+```python
+def calculate_memory_budget_with_dp(
+    config: 'SimulatorConfig', model_config: 'ModelConfig', total_gpu_memory: int
+) -> Tuple[int, int, int]:
+    """DP-aware 内存预算。
+    标准 DP：权重在 DP rank 间复制（不分割），KV cache 按 dp_size 分区。
+    DP Attention：attention 权重复制（每 DP rank 全量），MLP 权重 ÷ tp_size（大 TP 组）。
+    """
+    dp = config.dp_size
+    if config.enable_dp_attention:
+        # DP Attention: attention 权重复制，MLP 权重 ÷ tp_size
+        attn_weight = _estimate_attn_weight_bytes(model_config)
+        mlp_weight = _estimate_mlp_weight_bytes(model_config) // config.tp_size
+        weight_bytes = attn_weight + mlp_weight
+    else:
+        # 标准 DP: 全量权重复制
+        weight_bytes = _estimate_weight_bytes(model_config)
+    non_weight_bytes = _estimate_non_weight_bytes(model_config)
+    available = int(total_gpu_memory * config.memory_ratio)
+    kv_budget = max(0, available - weight_bytes - non_weight_bytes)
+    kv_budget_per_rank = kv_budget // dp
+    # 标准 DP: KV heads 不除（每 rank 独立完整 KV cache）
+    # DP Attention: KV heads 不除（MLA 本身 num_kv_heads=1，不需要再分）
+    bytes_per_token_per_layer = (
+        2 * model_config.num_kv_heads * model_config.head_dim * config.dtype_size
+    )
+    bytes_per_token = bytes_per_token_per_layer * model_config.num_layers
+    num_tokens = kv_budget_per_rank // max(1, bytes_per_token)
+    num_pages = num_tokens // config.page_size
+    graph_buffer = _calc_graph_buffer(config)
+    num_pages = max(0, num_pages - graph_buffer)
+    return num_pages, num_tokens, kv_budget_per_rank
+```
+
+#### 10.3.6 DP 指标
+
+```python
+class ParallelMetrics:
+    # ... 其他字段 ...
+    # 标准 DP
+    dp_rank_load: List[int] = field(default_factory=list)  # 各 DP 副本最终负载
+    # DP Attention
+    dp_attn_comm_ticks: int = 0          # DP Attention all-gather 总成本
+    dp_attn_all_gather_count: int = 0     # all-gather 调用次数
+```
+
+### 10.4 EP 专家并行仿真
+
+#### 10.4.1 EP rank 结构（TP rank 重编号）
+
+**关键概念**（参见 sglang-note《scheduler-rank-and-process-topology》§2.5）：
+EP **不增加进程数**，而是在 MoE 层将 TP rank 重新划分为三层：
+```
+层级：Global(TP) → MOE_DP → EP → MOE_TP
+```
+即：`tp_rank` → `(moe_dp_rank, moe_ep_rank, moe_tp_rank)`
+
+各层含义：
+- `moe_dp_size`：MoE 数据并行副本数（复用 DP 副本）
+- `ep_size`：专家并行数（每个 EP rank 持有 `num_experts/ep_size` 个专家）
+- `moe_tp_size`：MoE 内部张量并行数（`tp_size / moe_dp_size / ep_size`）
+
+`ParallelTopology.compute_moe_ranks(tp_rank)` 封装了此映射。
+
+#### 10.4.2 仿真目标
+
+`SimMoeBackend`（§3.4.5b）已实现专家分片与 all-to-all 成本计算。本节补充**路由仿真**、**EPLB 动态负载均衡**和**与 forward 路径的集成**。
+
+#### 10.4.3 MoE 路由仿真模式
+
+`config.moe_routing_mode` 决定路由行为：
+
+| 模式 | 行为 | 适用场景 |
+|------|------|----------|
+| `"mock"` | 不路由，仅记录 token 数和通信成本 | 基准仿真（默认） |
+| `"hash"` | `expert_idx = hash(token_id) % num_experts`，统计跨 rank 比例 | 负载分布仿真 |
+| `"simulated"` | 随机选择 `moe_top_k` 个专家，计算跨 EP rank 的 token 比例 | 真实路由仿真 |
+
+```python
+class SimMoeBackend(BaseMoeBackend):
+    # ... §3.4.5b 已有的 __init__ 和 forward ...
+
+    def _route_tokens(self, batch_size: int) -> Dict[int, int]:
+        """路由仿真：返回 {target_ep_rank: token_count} 映射。
+        只有 moe_routing_mode != "mock" 时执行真实路由。
+        """
+        if self.model_config is None:
+            return {0: batch_size}
+        routing_mode = getattr(self.config, 'moe_routing_mode', 'mock') \
+            if self.config else 'mock'
+        if routing_mode == "mock":
+            # mock 模式：所有 token "留在本地"，但仍计算 all-to-all 成本
+            return {0: batch_size}
+        top_k = self.model_config.moe_top_k
+        rank_distribution: Dict[int, int] = {}
+        for token_idx in range(batch_size):
+            if routing_mode == "hash":
+                expert = hash(token_idx) % self.model_config.num_experts
+            else:  # "simulated"
+                import random
+                expert = random.randint(0, self.model_config.num_experts - 1)
+            # 找到该专家所在的 EP rank
+            ep_rank = self._expert_to_rank(expert)
+            rank_distribution[ep_rank] = rank_distribution.get(ep_rank, 0) + top_k
+        return rank_distribution
+
+    def _expert_to_rank(self, expert_idx: int) -> int:
+        """将专家索引映射到 EP rank"""
+        cumulative = 0
+        for rank, count in enumerate(self.experts_per_rank):
+            cumulative += count
+            if expert_idx < cumulative:
+                return rank
+        return 0
+
+    def forward(self, hidden_states, batch_size: int) -> Tuple[Any, int]:
+        """完整 EP forward：路由 + all-to-all 成本"""
+        self.call_count += 1
+        self.total_tokens += batch_size
+        comm_cost = 0
+        if self.ep_size > 1 and self.comm_group is not None:
+            # 路由分布
+            distribution = self._route_tokens(batch_size)
+            # 计算需要发送到其他 rank 的 token 数据量
+            remote_tokens = sum(c for r, c in distribution.items() if r != 0)
+            # all-to-all：发送 remote_tokens 的 hidden
+            data_bytes = remote_tokens * self.model_config.hidden_size * self.dtype_size
+            comm_cost += self.comm_group.all_to_all(data_bytes)
+            # 反向 all-to-all
+            comm_cost += self.comm_group.all_to_all(data_bytes)
+            self.comm_ticks_total += comm_cost
+        return hidden_states, comm_cost
+```
+
+#### 10.4.4 EPLB 动态专家负载均衡
+
+当 `enable_eplb=True` 时，仿真 SGLang 的 `eplb` 模块——按运行时统计动态调整专家分布：
+
+```python
+class EPLBSimulator:
+    """动态专家负载均衡仿真器。
+    对应 SGLang 的 eplb 模块。
+
+    机制：
+    1. 收集每个 EP rank 的 token 负载统计
+    2. 按 step 间隔重新分配专家到各 EP rank
+    3. 仿真中不实际迁移专家权重，只记录重平衡成本
+    """
+    def __init__(self, config: 'SimulatorConfig', num_experts: int, ep_size: int):
+        self.enabled = config.enable_eplb
+        self.num_experts = num_experts
+        self.ep_size = ep_size
+        self.rebalance_interval = 100  # 每 100 步重平衡一次
+        self.step_count = 0
+        self.rebalance_count = 0
+        self.rebalance_cost_ticks = 10  # 每次重平衡的固定成本
+
+    def step(self, rank_loads: List[int]) -> int:
+        """每步调用，返回重平衡成本（0 表示不重平衡）"""
+        if not self.enabled or self.ep_size <= 1:
+            return 0
+        self.step_count += 1
+        if self.step_count % self.rebalance_interval != 0:
+            return 0
+        # 检查是否需要重平衡（负载方差超过阈值）
+        avg = sum(rank_loads) / len(rank_loads)
+        variance = sum((l - avg) ** 2 for l in rank_loads) / len(rank_loads)
+        if variance < avg * 0.1:  # 方差小于均值的 10%，不重平衡
+            return 0
+        self.rebalance_count += 1
+        return self.rebalance_cost_ticks
+```
+
+#### 10.4.5 EP 指标
+
+```python
+class ParallelMetrics:
+    # ... 其他字段 ...
+    ep_comm_ticks: int = 0           # EP all-to-all 总成本
+    ep_all_to_all_count: int = 0    # all-to-all 调用次数
+    ep_cross_rank_tokens: int = 0   # 跨 rank 路由的 token 总数
+    eplb_rebalance_count: int = 0   # EPLB 重平衡次数
+    eplb_rebalance_ticks: int = 0   # EPLB 重平衡总成本
+```
+
+### 10.5 PP 流水并行仿真
+
+#### 10.5.1 仿真目标与关键约束
+
+PP 将模型层按 `pp_size` 分割到多个 stage，采用 micro-batch 流水线调度。仿真目标：
+1. **层分割**：`num_layers` 按 `pp_size` 分配到各 stage（`ParallelTopology.pp_stage_layers`）
+2. **micro-batch 调度**：支持 `1f1b` / `gpipe` / `interleaved` 三种流水线调度
+3. **stage 间 send/recv**：每个 micro-batch 在 stage 间传递 hidden_states，产生通信成本
+4. **pipeline bubble**：仿真流水线气泡对吞吐的影响
+
+**关键约束**（参见 sglang-note《scheduler-rank-and-process-topology》§5.2-5.3）：
+- **只有 PP=0, TP=0 rank 从 ZMQ 拉取请求**，通过 `broadcast_pyobj` 广播到同 PP 组的其他 rank，再通过 `point_to_point_pyobj` 传给下一 PP stage
+- **只有最后一个 PP stage 做采样**（`is_pp_last = (pp_rank == pp_size - 1)`），中间 stage 只返回 hidden_states
+- **PP 通信组是跨 stage 的**：同一 DP rank、同一 TP rank、不同 PP rank 的进程属于同一个 PP group
+
+#### 10.5.2 PP 流水线仿真器
+
+```python
+class PPPipelineSimulator:
+    """PP 流水并行仿真器。
+    pp_size=1 时所有方法 noop（退化为单 stage）。
+    仿真中不实际分割模型，只仿真流水线调度时序和通信成本。
+    """
+    def __init__(self, config: 'SimulatorConfig', model_config: 'ModelConfig'):
+        self.config = config
+        self.model_config = model_config
+        self.pp_size = config.pp_size
+        self.schedule = config.pp_pipeline_schedule
+        self.num_micro_batches = config.pp_num_micro_batches
+        # 通信组
+        self.comm_group = SimCommGroup(
+            group_size=config.pp_size,
+            config=config,
+            group_type="pp",
+        ) if self.pp_size > 1 else None
+        # 每个 stage 的层范围
+        self.stage_layers = ParallelTopology(
+            pp_size=self.pp_size
+        ).pp_stage_layers(model_config.num_layers)
+        # 流水线状态
+        self.stage_buffers: List[List] = [[] for _ in range(self.pp_size)]
+        # 仿真 tick 记录
+        self.bubble_ticks = 0
+        self.comm_ticks_total = 0
+
+    def simulate_pipeline_forward(self, batch: 'Batch') -> int:
+        """仿真整个 pipeline forward，返回总通信成本 ticks。
+        不实际执行 forward（MockEngine 已有 mock forward），
+        只仿真 stage 间通信和流水线气泡。
+        """
+        if self.pp_size <= 1:
+            return 0
+        total_comm = 0
+        micro_batches = self._split_micro_batches(batch)
+        if self.schedule == "gpipe":
+            total_comm = self._simulate_gpipe(micro_batches)
+        elif self.schedule == "1f1b":
+            total_comm = self._simulate_1f1b(micro_batches)
+        elif self.schedule == "interleaved":
+            total_comm = self._simulate_interleaved(micro_batches)
+        else:
+            raise ValueError(f"Unknown PP schedule: {self.schedule}")
+        self.comm_ticks_total += total_comm
+        return total_comm
+
+    def _split_micro_batches(self, batch: 'Batch') -> List['Batch']:
+        """将 batch 按 num_micro_batches 分割为 micro-batch 列表。
+        仿真中不实际分割数据，只记录 micro-batch 的 size。
+        """
+        if self.num_micro_batches <= 1:
+            return [batch]
+        micro_size = batch.size // self.num_micro_batches
+        remainder = batch.size % self.num_micro_batches
+        micro_batches = []
+        for i in range(self.num_micro_batches):
+            size = micro_size + (1 if i < remainder else 0)
+            # 仿真 micro-batch：只记录 size，不复制数据
+            micro_batch = type(batch)(size=size)  # type: ignore
+            micro_batches.append(micro_batch)
+        return micro_batches
+
+    def _stage_send_recv_cost(self, micro_batch_size: int) -> int:
+        """计算单个 stage 间 send/recv 的通信成本。
+        数据量 = micro_batch_size × hidden_size × dtype_size。
+        """
+        if self.comm_group is None:
+            return 0
+        data_bytes = micro_batch_size * self.model_config.hidden_size * self.config.dtype_size
+        return self.comm_group.send_recv(data_bytes)
+
+    def _simulate_gpipe(self, micro_batches: List) -> int:
+        """GPipe 调度：所有 micro-batch 依次走完所有 stage。
+        气泡 = (pp_size - 1) × 单 stage 计算时间。
+        """
+        total_comm = 0
+        for mb in micro_batches:
+            for stage in range(self.pp_size - 1):
+                total_comm += self._stage_send_recv_cost(mb.size)
+        # GPipe 气泡
+        self.bubble_ticks += (self.pp_size - 1) * self.config.eager_forward_cost_ticks
+        return total_comm
+
+    def _simulate_1f1b(self, micro_batches: List) -> int:
+        """1F1B 调度：每个 stage 交替执行 forward 和 backward。
+        气泡 = (pp_size - 1) × 单 stage 计算时间（比 GPipe 少）。
+        仿真中只仿真 forward 通信（不仿真 backward）。
+        """
+        total_comm = 0
+        n = len(micro_batches)
+        for stage in range(self.pp_size - 1):
+            for mb_idx in range(n):
+                total_comm += self._stage_send_recv_cost(micro_batches[mb_idx].size)
+        # 1F1B 气泡（比 GPipe 略少）
+        self.bubble_ticks += (self.pp_size - 1) * self.config.eager_forward_cost_ticks
+        return total_comm
+
+    def _simulate_interleaved(self, micro_batches: List) -> int:
+        """Interleaved 调度：将 micro-batch 分成多组，在 stage 间交错执行。
+        气泡最少，但通信次数更多。
+        """
+        total_comm = 0
+        n = len(micro_batches)
+        # interleaved 的通信次数 ≈ GPipe × interleaved_factor
+        for stage in range(self.pp_size - 1):
+            for mb_idx in range(n):
+                total_comm += self._stage_send_recv_cost(micro_batches[mb_idx].size)
+        # interleaved 气泡（比 1F1B 更少）
+        self.bubble_ticks += max(0, (self.pp_size - 1) // 2) * self.config.eager_forward_cost_ticks
+        return total_comm
+```
+
+#### 10.5.3 PP 与 forward 路径集成
+
+```python
+class MockEngine:
+    def __init__(self, config, model_config, pp_rank: int = 0):
+        # ... 原有初始化 ...
+        self.pp_rank = pp_rank
+        self.is_pp_last = (pp_rank == config.pp_size - 1)
+        self.pp_sim = PPPipelineSimulator(config, model_config)
+
+    def forward_batch(self, batch: Batch, args: BatchSamplingArgs) -> ForwardOutput:
+        """PP 通信成本注入 + 最后 stage 采样"""
+        with self.ctx.forward_batch(batch):
+            if self.graph_runner.can_use_cuda_graph(batch):
+                logits = self.graph_runner.replay(batch)
+                pp_comm = 0  # CUDA Graph 内不仿真 PP
+            else:
+                logits = self._mock_model_forward(batch)
+                pp_comm = self.pp_sim.simulate_pipeline_forward(batch)
+
+        if pp_comm > 0:
+            self.metrics.parallel.pp_comm_ticks += pp_comm
+            self.metrics.parallel.pp_bubble_ticks += self.pp_sim.bubble_ticks
+            self.metrics.parallel.comm_ticks_total += pp_comm
+
+        # 关键：只有最后一个 PP stage 做采样
+        if not self.is_pp_last:
+            # 中间 stage 返回 hidden_states（不采样）
+            return ForwardOutput(logits=logits, sampled_ids=None, is_intermediate=True)
+        # 最后 stage 正常采样
+        next_token_ids = self.sampler.sample(logits, args)
+        # ... 返回最终输出 ...
+```
+
+#### 10.5.4 PP 指标
+
+```python
+class SimulationMetrics:
+    # ... 已有字段 ...
+    pp_comm_ticks: int = 0        # PP send/recv 总成本
+    pp_bubble_ticks: int = 0      # 流水线气泡 ticks
+    pp_micro_batches: int = 0     # 执行的 micro-batch 总数
+```
+
+### 10.6 TP 通信基础设施仿真
+
+#### 10.6.1 SGLang 实际通信架构
+
+SGLang 的 TP 通信分为三层（参见 mini-sglang `scheduler/io.py` 和 `engine/engine.py`）：
+
+| 层 | 实现 | 用途 |
+|----|------|------|
+| **ZMQ 多 rank** | `ZmqSubQueue` / `ZmqPubQueue` | primary rank 从 tokenizer 接收消息后广播给其他 TP rank |
+| **CPU 侧 group** | `gloo` backend (`tp_cpu_group`) | barrier、broadcast（元数据同步） |
+| **GPU 侧 group** | `nccl` 或 `pynccl` (`tp_device_group`) | all-reduce（梯度/激活同步） |
+
+```python
+class TPCommInfraSimulator:
+    """TP 通信基础设施仿真器。
+    仿真 ZMQ 广播 + gloo barrier + nccl all-reduce 的三层成本。
+    tp_size=1 时所有方法 noop。
+    """
+    def __init__(self, config: 'SimulatorConfig', model_config: 'ModelConfig'):
+        self.config = config
+        self.model_config = model_config
+        self.tp_size = config.tp_size
+        # CPU 侧 gloo group 成本
+        self.cpu_group_type = config.tp_cpu_group_type  # "gloo"
+        # GPU 侧 nccl group 成本
+        self.gpu_group_type = config.tp_gpu_group_type  # "nccl" or "pynccl"
+        # SimCommGroup 用于 all-reduce 成本计算
+        self.comm_group = SimCommGroup(
+            group_size=self.tp_size,
+            config=config,
+            group_type="tp",
+        )
+        self.zmq_broadcast_ticks = 0
+        self.barrier_ticks = 0
+
+    def zmq_broadcast(self, msg_size: int) -> int:
+        """仿真 ZMQ 广播成本（primary rank → 其他 TP rank）。
+        成本 = msg_size / bandwidth（无 NCCL 延迟，纯 TCP 传输）。
+        """
+        if self.tp_size <= 1:
+            return 0
+        # ZMQ 传输成本：简化为 msg_size / bandwidth
+        cost = msg_size // max(1, self.config.comm_bandwidth_bytes_per_tick)
+        self.zmq_broadcast_ticks += cost
+        return cost
+
+    def cpu_barrier(self) -> int:
+        """仿真 gloo barrier 成本（固定延迟）"""
+        if self.tp_size <= 1:
+            return 0
+        cost = 1  # barrier 固定 1 tick
+        self.barrier_ticks += cost
+        return cost
+
+    def gpu_all_reduce(self, data_bytes: int) -> int:
+        """仿真 nccl all-reduce 成本（调用 SimCommGroup）"""
+        return self.comm_group.all_reduce(data_bytes)
+```
+
+### 10.7 并行组合与初始化
+
+#### 10.7.1 通信组初始化
+
+```python
+def init_parallel_groups(config: 'SimulatorConfig',
+                          model_config: 'ModelConfig'
+                          ) -> Dict[str, Any]:
+    """根据 SimulatorConfig 初始化所有并行仿真组件。
+    返回组件字典，由 MockEngine 和 SimScheduler 使用。
+    """
+    topology = ParallelTopology(
+        tp_size=config.tp_size,
+        dp_size=config.dp_size,
+        ep_size=config.ep_size,
+        pp_size=config.pp_size,
+        cp_size=config.cp_size,
+        enable_dp_attention=config.enable_dp_attention,
+    )
+    return {
+        "topology": topology,
+        "tp_comm": TPCommInfraSimulator(config, model_config),
+        "tp_sim": TPSimulator(config, model_config),
+        "dp_controller": DataParallelController(config, 0),  # num_pages 由 scheduler 填入
+        "dp_attn_sim": DPAttentionSimulator(config, model_config)
+            if config.enable_dp_attention else None,
+        "pp_sim": PPPipelineSimulator(config, model_config),
+        "cp_sim": CPSimulator(config, model_config)
+            if config.cp_size > 1 else None,
+        "eplb_sim": EPLBSimulator(config, model_config.num_experts, config.ep_size)
+            if config.enable_eplb else None,
+        "moe_backend": (
+            SimMoeBackend(
+                model_config, config.ep_size,
+                SimCommGroup(config.ep_size, config, "ep"),
+            )
+            if model_config.is_moe else None
+        ),
+    }
+```
+
+#### 10.7.2 内存预算组合修正
+
+当多种并行同时启用时，内存预算需组合修正：
+
+```python
+def calculate_memory_budget_parallel(
+    config: 'SimulatorConfig',
+    model_config: 'ModelConfig',
+    total_gpu_memory: int,
+) -> Tuple[int, int, int]:
+    """组合并行内存预算。
+    修正规则：
+    - 标准 TP：权重 ÷ tp_size，KV heads ÷ tp_size
+    - DP Attention：attention 权重复制，MLP 权重 ÷ tp_size
+    - 标准 DP：KV cache 总量 ÷ dp_size（各副本独立）
+    - EP：不影响 KV cache（MoE 权重在权重预算中）
+    - CP：不影响 KV cache（序列切分不改变每层 KV 大小）
+    - PP：不影响 KV cache（层分割不影响每层 KV）
+    """
+    tp = config.tp_size
+    dp = config.dp_size
+    if config.enable_dp_attention:
+        # DP Attention: attention 权重复制，MLP 权重 ÷ tp_size
+        attn_weight = _estimate_attn_weight_bytes(model_config)
+        mlp_weight = _estimate_mlp_weight_bytes(model_config) // tp
+        weight_bytes = attn_weight + mlp_weight
+    else:
+        # 标准 TP: 全量权重 ÷ tp_size
+        weight_bytes = _estimate_weight_bytes(model_config) // tp
+    non_weight_bytes = _estimate_non_weight_bytes(model_config)
+    available = int(total_gpu_memory * config.memory_ratio)
+    kv_budget = max(0, available - weight_bytes - non_weight_bytes)
+    # DP 分区
+    kv_budget_per_rank = kv_budget // dp
+    # TP 分割 KV heads
+    local_kv_heads = div_even(model_config.num_kv_heads, tp, allow_replicate=True)[0]
+    bytes_per_token_per_layer = (
+        2 * local_kv_heads * model_config.head_dim * config.dtype_size
+    )
+    bytes_per_token = bytes_per_token_per_layer * model_config.num_layers
+    num_tokens = kv_budget_per_rank // max(1, bytes_per_token)
+    num_pages = num_tokens // config.page_size
+    graph_buffer = _calc_graph_buffer(config)
+    num_pages = max(0, num_pages - graph_buffer)
+    return num_pages, num_tokens, kv_budget_per_rank
+```
+
+#### 10.7.3 并行约束验证
+
+```python
+def validate_parallel_config(config: 'SimulatorConfig',
+                              model_config: 'ModelConfig') -> None:
+    """验证并行配置合法性，启动时调用。"""
+    assert config.tp_size >= 1, "tp_size must be >= 1"
+    assert config.dp_size >= 1, "dp_size must be >= 1"
+    assert config.ep_size >= 1, "ep_size must be >= 1"
+    assert config.pp_size >= 1, "pp_size must be >= 1"
+    assert config.cp_size >= 1, "cp_size must be >= 1"
+    # EP 仅对 MoE 模型有效
+    if config.ep_size > 1 and not model_config.is_moe:
+        raise ValueError("EP size > 1 requires is_moe=True in ModelConfig")
+    # EP 是 TP rank 重编号：ep_size 不能超过 tp_size
+    if config.ep_size > config.tp_size:
+        raise ValueError(
+            f"ep_size ({config.ep_size}) > tp_size ({config.tp_size}). "
+            f"EP is a re-ranking of TP ranks, cannot exceed tp_size."
+        )
+    # CP 是 TP rank 重编号：cp_size 不能超过 tp_size
+    if config.cp_size > config.tp_size:
+        raise ValueError(
+            f"cp_size ({config.cp_size}) > tp_size ({config.tp_size}). "
+            f"CP is a re-ranking of TP ranks, cannot exceed tp_size."
+        )
+    # EP size 不能超过专家数
+    if config.ep_size > model_config.num_experts:
+        raise ValueError(
+            f"ep_size ({config.ep_size}) > num_experts ({model_config.num_experts})"
+        )
+    # PP size 不能超过层数
+    if config.pp_size > model_config.num_layers:
+        raise ValueError(
+            f"pp_size ({config.pp_size}) > num_layers ({model_config.num_layers})"
+        )
+    # TP size 不能超过 attention heads
+    if config.tp_size > model_config.num_attention_heads:
+        raise ValueError(
+            f"tp_size ({config.tp_size}) > num_attention_heads "
+            f"({model_config.num_attention_heads})"
+        )
+    # KV heads 必须能被 TP 整除（或使用复制）
+    kv_per_rank = div_even(model_config.num_kv_heads, config.tp_size, allow_replicate=True)
+    if len(set(kv_per_rank)) > 1:
+        import warnings
+        warnings.warn("KV heads not evenly divisible by tp_size, using replication")
+```
+
+### 10.8 CP Context Parallel 仿真
+
+#### 10.8.1 CP rank 结构（TP rank 重编号）
+
+**关键概念**（参见 sglang-note《scheduler-rank-and-process-topology》§2.4）：
+CP **不增加进程数**，而是在 Attention 层将 TP rank 重新划分为两层：
+```
+层级：Global(TP) → ATTN_DP → ATTN_CP → ATTN_TP
+```
+即：`tp_rank` → `(attn_cp_rank, attn_tp_rank)`
+
+各层含义：
+- `attn_dp_size`：Attention 数据并行（启用 DP Attention 时 = dp_size，否则 = 1）
+- `cp_size`：Context Parallel 数（将长序列按 cp_size 切分）
+- `attn_tp_size`：Attention 内部张量并行数（`tp_size / attn_dp_size / cp_size`）
+
+`ParallelTopology.compute_attn_ranks(tp_rank)` 封装了此映射。
+
+#### 10.8.2 CPSimulator
+
+```python
+class CPSimulator:
+    """Context Parallel 仿真器。
+    对应 SGLang 的 attn_cp_size 机制。
+
+    机制：
+    1. 长序列按 cp_size 切分为多个 chunk
+    2. 每个 CP rank 处理一个 chunk 的 attention 计算
+    3. attention 前后通过 all-gather 同步完整序列的 KV
+    4. 仿真中不实际切分序列，只计算通信成本
+    """
+    def __init__(self, config: 'SimulatorConfig', model_config: 'ModelConfig'):
+        self.config = config
+        self.model_config = model_config
+        self.cp_size = config.cp_size
+        self.comm_group = SimCommGroup(
+            group_size=self.cp_size,
+            config=config,
+            group_type="cp",
+        ) if self.cp_size > 1 else None
+        self.total_comm_ticks = 0
+
+    def simulate_attn_forward(self, seq_len: int) -> int:
+        """仿真 CP attention 的 all-gather 通信成本。
+        seq_len: 完整序列长度。
+        CP 通信：all-gather KV cache（每 rank 只有 1/cp_size 的 KV）。
+        """
+        if self.cp_size <= 1 or self.comm_group is None:
+            return 0
+        # KV all-gather 数据量 = seq_len × num_kv_heads × head_dim × dtype × num_layers
+        kv_bytes = (
+            seq_len * self.model_config.num_kv_heads
+            * self.model_config.head_dim * self.config.dtype_size
+            * self.model_config.num_layers
+        )
+        cost = self.comm_group._compute_cost(kv_bytes)
+        self.total_comm_ticks += cost
+        return cost
+```
+
+> SimCommGroup._compute_cost 需追加 `cp` group_type：
+> ```python
+> elif self.group_type == "cp":
+>     latency = self.config.all_reduce_latency_ticks
+>     per_byte = self.config.cp_all_gather_cost_per_byte_ticks
+> ```
+
+### 10.9 并行仿真完整指标汇总
+
+`SimulationMetrics` 新增的并行相关字段汇总：
+
+```python
+@dataclass
+class ParallelMetrics:
+    """并行仿真指标子结构，嵌入 SimulationMetrics"""
+    # TP
+    tp_comm_ticks: int = 0
+    tp_all_reduce_count: int = 0
+    # DP
+    dp_rank_load: List[int] = field(default_factory=list)
+    dp_rebalance_count: int = 0
+    # EP
+    ep_comm_ticks: int = 0
+    ep_all_to_all_count: int = 0
+    ep_cross_rank_tokens: int = 0
+    # PP
+    pp_comm_ticks: int = 0
+    pp_bubble_ticks: int = 0
+    pp_micro_batches: int = 0
+    # 通用
+    comm_ticks_total: int = 0  # 所有并行通信成本总和
+
+    def summary(self) -> Dict[str, Any]:
+        return {
+            "tp_comm_ticks": self.tp_comm_ticks,
+            "tp_all_reduce_count": self.tp_all_reduce_count,
+            "dp_rank_load": self.dp_rank_load,
+            "dp_rebalance_count": self.dp_rebalance_count,
+            "ep_comm_ticks": self.ep_comm_ticks,
+            "ep_all_to_all_count": self.ep_all_to_all_count,
+            "ep_cross_rank_tokens": self.ep_cross_rank_tokens,
+            "pp_comm_ticks": self.pp_comm_ticks,
+            "pp_bubble_ticks": self.pp_bubble_ticks,
+            "pp_micro_batches": self.pp_micro_batches,
+            "comm_ticks_total": self.comm_ticks_total,
+        }
+```
+
+### 10.10 并行仿真测试策略
+
+#### 10.10.1 TP 测试用例
+
+```python
+def test_tp_comm_cost():
+    """TP>1 时应产生 all-reduce 通信成本"""
+    config = SimulatorConfig(
+        model_config=ModelConfig(num_layers=2, hidden_size=128, ...),
+        tp_size=2, all_reduce_latency_ticks=2,
+    )
+    engine = MockEngine(config, config.model_config)
+    batch = make_test_batch(size=4)
+    engine.forward_batch(batch, make_sampling_args())
+    assert engine.metrics.parallel.tp_comm_ticks > 0
+    assert engine.metrics.parallel.tp_all_reduce_count > 0
+
+def test_tp_memory_budget():
+    """TP>1 时页数应约为 TP=1 的 tp_size 倍"""
+    config_tp1 = SimulatorConfig(model_config=mc, tp_size=1)
+    config_tp2 = SimulatorConfig(model_config=mc, tp_size=2)
+    pages1, _, _ = calculate_memory_budget_parallel(config_tp1, mc, mem)
+    pages2, _, _ = calculate_memory_budget_parallel(config_tp2, mc, mem)
+    assert pages2 >= pages1 * 1.8  # 容许 10% overhead
+```
+
+#### 10.10.2 DP 测试用例
+
+```python
+def test_dp_round_robin():
+    """round_robin 策略应均匀分配"""
+    config = SimulatorConfig(model_config=mc, dp_size=4,
+                            dp_load_balance_strategy="round_robin")
+    controller = DataParallelController(config, total_pages=1000)
+    for i in range(8):
+        req = make_req(uid=i)
+        rank = controller.assign_request(req)
+        assert rank == i % 4
+
+def test_dp_shortest_queue():
+    """shortest_queue 应分配到最空闲的副本"""
+    config = SimulatorConfig(model_config=mc, dp_size=2,
+                            dp_load_balance_strategy="shortest_queue")
+    controller = DataParallelController(config, total_pages=1000)
+    # 先填充 rank 0
+    controller.ranks[0].used_pages = 500
+    req = make_req(uid=0)
+    rank = controller.assign_request(req)
+    assert rank == 1  # 应分配到空闲的 rank 1
+
+def test_dp_attention_all_gather():
+    """DP Attention 模式应产生 all-gather 通信成本"""
+    config = SimulatorConfig(model_config=mc, dp_size=2,
+                            enable_dp_attention=True)
+    dp_attn_sim = DPAttentionSimulator(config, mc)
+    comm = dp_attn_sim.simulate_mlp_forward([4, 4])  # 两个 DP rank 各 4 token
+    assert comm > 0  # 有 all-gather 成本
+```
+
+#### 10.10.3 EP 测试用例
+
+```python
+def test_ep_expert_distribution():
+    """EP>1 时专家应均匀分片"""
+    mc = ModelConfig(num_experts=8, is_moe=True, moe_top_k=2, hidden_size=64, ...)
+    config = SimulatorConfig(model_config=mc, ep_size=2)
+    moe = SimMoeBackend(mc, ep_size=2,
+        comm_group=SimCommGroup(2, config, "ep"))
+    assert moe.experts_per_rank == [4, 4]
+    assert moe._expert_to_rank(3) == 0
+    assert moe._expert_to_rank(5) == 1
+
+def test_ep_comm_cost():
+    """EP>1 时 forward 应产生 all-to-all 通信成本"""
+    mb = make_test_batch(size=4)
+    _, comm = moe.forward(None, 4)
+    assert comm > 0
+```
+
+#### 10.10.4 PP 测试用例
+
+```python
+def test_pp_bubble():
+    """PP>1 时应产生流水线气泡"""
+    config = SimulatorConfig(model_config=mc, pp_size=2,
+                            pp_num_micro_batches=4,
+                            pp_pipeline_schedule="1f1b")
+    pp_sim = PPPipelineSimulator(config, mc)
+    batch = make_test_batch(size=8)
+    comm = pp_sim.simulate_pipeline_forward(batch)
+    assert comm > 0  # 有 send/recv 成本
+    assert pp_sim.bubble_ticks > 0  # 有气泡
+
+def test_pp_stage_layers():
+    """层应按 pp_size 均分"""
+    topo = ParallelTopology(pp_size=4)
+    layers = topo.pp_stage_layers(8)
+    assert [len(r) for r in layers] == [2, 2, 2, 2]
+```
+
+#### 10.10.5 组合并行测试
+
+```python
+def test_tp_dp_ep_pp_cp_combined():
+    """TP=4, DP=2, EP=2, PP=2, CP=2 组合仿真。
+    注意：ep_size=2 和 cp_size=2 都是 tp_size=4 的重编号，不增加进程数。
+    world_size = tp × dp × pp = 4 × 2 × 2 = 16（不是 4×2×2×2×2=32）
+    """
+    mc = ModelConfig(num_layers=8, num_attention_heads=8,
+                     num_kv_heads=8, hidden_size=64,
+                     is_moe=True, num_experts=4, moe_top_k=1, ...)
+    config = SimulatorConfig(
+        model_config=mc, tp_size=4, dp_size=2, ep_size=2, pp_size=2,
+        cp_size=2, pp_num_micro_batches=2,
+    )
+    validate_parallel_config(config, mc)  # 不抛异常
+    assert ParallelTopology(
+        tp_size=4, dp_size=2, ep_size=2, pp_size=2, cp_size=2
+    ).world_size == 16  # tp×dp×pp，不是 32
+    engine = MockEngine(config, mc)
+    batch = make_test_batch(size=4)
+    engine.forward_batch(batch, make_sampling_args())
+    m = engine.metrics.parallel
+    assert m.tp_comm_ticks > 0
+    assert m.ep_comm_ticks > 0
+    assert m.pp_comm_ticks > 0
+    assert m.comm_ticks_total == (
+        m.tp_comm_ticks + m.ep_comm_ticks + m.pp_comm_ticks
+    )
+```
+
+### 10.11 退化为单实例的验证
+
+```python
+def test_parallel_degradation():
+    """所有并行 size=1 时应退化为纯单实例，零通信成本"""
+    mc = ModelConfig(num_layers=2, hidden_size=64, ...)
+    config = SimulatorConfig(model_config=mc, tp_size=1, dp_size=1,
+                            ep_size=1, pp_size=1, cp_size=1)
+    engine = MockEngine(config, mc)
+    batch = make_test_batch(size=4)
+    engine.forward_batch(batch, make_sampling_args())
+    m = engine.metrics.parallel
+    assert m.tp_comm_ticks == 0
+    assert m.ep_comm_ticks == 0
+    assert m.pp_comm_ticks == 0
+    assert m.comm_ticks_total == 0
+```
+
+### 10.12 TS strict 实现要点
+
+1. **类型定义**：所有 Python dataclass → TS interface/class，`List` → `T[]`，`Dict` → `Map`/`Record`
+2. **Optional 字段**：`num_pages: int | None` → `num_pages: number | null`
+3. **Tuple 返回**：`Tuple[int, int, int]` → `[number, number, number]` 或具名 interface
+4. **零运行时依赖**：不引入 NCCL/MPI/任何通信库，通信成本纯算术
+5. **枚举**：`group_type: str` → `type GroupType = "tp" | "ep" | "pp" | "dp_attn" | "cp"`
+6. **strict 模式**：所有字段显式初始化，禁用 `any`（`// @ts-ignore` 仅用于兼容层）
+7. **EP/CP 重编号**：TS 实现中 `compute_moe_ranks` / `compute_attn_ranks` 是纯计算函数，不涉及进程间通信
+
+---
+
+## 11. 总结
 
 本报告基于对 `sglang-note`（源码阅读笔记，40+ 篇文章）、`mini-sglang`（约 5000 行的 SGLang 紧凑实现）和 `Awesome-ML-SYS-Tutorial/sglang`（架构博客，20+ 篇文章）的全面研究，提取了 SGLang 推理框架的完整系统层行为规格。
 
@@ -3494,5 +4981,17 @@ class SimulationMetrics:
 1. **仿真范围**：Scheduler 全链路（prefill/decode 调度、cache 管理、table 管理）、RadixCache 前缀缓存算法、CUDA Graph 分桶与 replay 决策、Overlap Scheduling 时序、内存预算计算 — 这些是系统层研究的核心
 2. **模拟范围**：模型 forward、attention kernel、sampler、ZMQ/NCCL 通信 — 这些用 mock 替代，不影响系统层行为
 3. **关键算法**：Chunked Prefill（token budget 控制）、RadixTree（前缀匹配+分裂+LRU eviction）、cache_req 的 5 区域管理、Overlap Scheduling 的双 stream 重叠
+4. **并行仿真**（§10）：
+   - **TP**（§10.2, §10.6）：all-reduce 通信成本 + 权重/KV 分割 + ZMQ 广播 + gloo/nccl 三层通信基础设施
+   - **DP**（§10.3）：标准 DP（`DataParallelController` 请求分发 round_robin/shortest_queue）+ DP Attention（MLA 模型专用 all-gather/slice 机制）
+   - **EP**（§10.4）：MoE 专家分片 + TP rank 重编号（moe_dp/moe_ep/moe_tp 三层）+ all-to-all + EPLB 动态负载均衡
+   - **PP**（§10.5）：micro-batch 调度 + 最后 stage 采样 + stage 间通信 + 气泡仿真
+   - **CP**（§10.8）：Context Parallel 长序列切分 + TP rank 重编号 + KV all-gather
+   - **进程数 = tp × dp × pp**（EP/CP 是 TP rank 重编号，不增加进程数）
+   - 所有并行通过 `SimCommGroup` 统一通信成本模型，`size=1` 时退化为纯单实例
 
-模拟器采用 tick-based 离散事件仿真，支持可配置的调度策略、工作负载和性能指标收集，可在无 GPU 环境下研究 SGLang 的系统层优化策略。
+**实现路径**（§5.1）：Phase 1-4 覆盖单实例核心（数据结构→RadixCache→CUDA Graph/Overlap→内存预算/指标），Phase 5 覆盖并行扩展（TP/DP/EP/PP/CP），每个 Phase 可独立测试。
+
+**TS strict 实现要点**（§10.12）：所有 Python dataclass → TS interface，零运行时依赖（通信成本纯算术），strict 模式禁用 `any`，`compute_moe_ranks`/`compute_attn_ranks` 为纯计算函数。
+
+模拟器采用 tick-based 离散事件仿真，支持可配置的调度策略、并行拓扑（TP×DP×PP 进程网格 + EP/CP rank 重编号 + DP Attention）、工作负载和性能指标收集，可在无 GPU 环境下研究 SGLang 的系统层优化策略和并行通信开销。
