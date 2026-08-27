@@ -38,3 +38,11 @@ export {
 } from "./entities";
 
 export type { PendingReqOpts } from "./entities";
+
+// K5: 内存预算基础公式 (§3.3.9)
+export {
+  MemoryBudgetResult,
+  estimateModelMemory,
+  estimateGraphBuffer,
+  calculateMemoryBudget,
+} from "./cache";

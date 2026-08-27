@@ -1,0 +1,20 @@
+{
+  "issue_number": 12,
+  "issue_title": "[SGLang-Sim] K5: 内存预算基础公式 calculate_memory_budget（§3.3.9）",
+  "labels": [
+    "enhancement",
+    "sglang-simulator",
+    "sglang-kvcache",
+    "sglang-memory"
+  ],
+  "branch": "issue-12",
+  "base_branch": "main",
+  "worktree_path": ".worktree\\issue-12",
+  "solution_pr_url": "https://github.com/Limixxx/inferflux/pull/35",
+  "solution_pr_number": 35,
+  "code_pr_url": null,
+  "code_pr_number": null,
+  "project_item_id": "PVTI_lAHOBeeNX84Bg4hjzg4NNMI",
+  "created_at": "2026-08-27T07:46:04Z",
+  "status": "In progress"
+}
