@@ -121,11 +121,12 @@ test("T6 SgSimContext.reset() clears state", () => {
 
 // ===== T7: SimRequestMsg tag="req_in" 构造正确 =====
 test("T7 SimRequestMsg req_in construction", () => {
+  const sp = new SamplingParams({ temperature: 0.0, topK: -1, topP: 1.0, maxNewTokens: 1024 });
   const msg: SimRequestMsg = {
     tag: "req_in",
     uid: 1,
     inputIds: [1, 2, 3],
-    samplingParams: { temperature: 0.0, topK: -1, topP: 1.0, ignoreEos: false, maxTokens: 1024 },
+    samplingParams: sp,
     outputLen: 100,
   };
   assert.strictEqual(msg.tag, "req_in");

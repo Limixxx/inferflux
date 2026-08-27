@@ -171,14 +171,10 @@ export const DEFAULT_SIMULATOR_CONFIG: SimulatorConfig = {
   enableMetrics: true,
 };
 
-/** 采样参数（对应 §2.2.1，S0 仅定义接口，S1 实现完整逻辑） */
-export interface SamplingParams {
-  temperature: number;
-  topK: number;
-  topP: number;
-  ignoreEos: boolean;
-  maxTokens: number;
-}
+// 采样参数（S1 升级为 class，S0 的 interface 替换为类型别名）
+import { SamplingParams as SamplingParamsClass, SamplingDtype, SamplingParamsOpts } from "./core";
+export { SamplingParamsClass as SamplingParams };
+export type { SamplingDtype, SamplingParamsOpts };
 
 /** 请求消息标签 */
 export type SimRequestMsgTag = "req_in" | "req_resume";
@@ -188,7 +184,7 @@ export interface SimRequestMsg {
   tag: SimRequestMsgTag;
   uid: number;
   inputIds: number[];
-  samplingParams: SamplingParams | null;
+  samplingParams: SamplingParamsClass | null;
   outputLen: number;
 }
 
