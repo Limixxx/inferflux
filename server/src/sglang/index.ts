@@ -9,10 +9,6 @@ export {
   SimRequestMsg,
   SimRespMsgTag,
   SimRespMsg,
-  TableManager,
-  BaseCacheHandle,
-  MatchResult,
-  InsertResult,
   CacheManager,
   SimScheduler,
   SimCommGroup,
@@ -42,10 +38,26 @@ export {
 
 export type { PendingReqOpts } from "./entities";
 
-// K5: 内存预算基础公式 (§3.3.9)
+// K1: cache 抽象层 + K5 内存预算 + K2 实现
 export {
+  // K1 抽象类
+  CacheSizeInfo,
+  BaseCacheHandle,
+  MatchResult,
+  InsertResult,
+  BaseKVCachePool,
+  BasePrefixCache,
+  // K5 内存预算公式
   MemoryBudgetResult,
   estimateModelMemory,
   estimateGraphBuffer,
   calculateMemoryBudget,
+  // K2 实现
+  MockKVCachePool,
+  PageAllocation,
+  NaivePrefixCache,
+  NaiveCacheHandle,
 } from "./cache";
+
+// K1: TableManager
+export { TableManager } from "./scheduler";
