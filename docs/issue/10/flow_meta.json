@@ -1,0 +1,19 @@
+{
+  "issue_number": 10,
+  "issue_title": "[SGLang-Sim] S1: 核心数据结构 SamplingParams/Req/ChunkedReq/Batch/PendingReq + 工具函数",
+  "labels": [
+    "enhancement",
+    "sglang-simulator",
+    "sglang-foundation"
+  ],
+  "branch": "issue-10",
+  "base_branch": "main",
+  "worktree_path": ".worktree\\issue-10",
+  "solution_pr_url": "https://github.com/Limixxx/inferflux/pull/33",
+  "solution_pr_number": 33,
+  "code_pr_url": null,
+  "code_pr_number": null,
+  "project_item_id": "PVTI_lAHOBeeNX84Bg4hjzg4NM7w",
+  "created_at": "2026-08-27T07:18:30Z",
+  "status": "In progress"
+}
