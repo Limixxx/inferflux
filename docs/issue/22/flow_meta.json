@@ -1,0 +1,20 @@
+{
+  "issue_number": 22,
+  "issue_title": "[SGLang-Sim] P1a: TP Simulator + TPCommInfra（ZMQ 广播/gloo barrier/nccl all-reduce 三层）",
+  "labels": [
+    "enhancement",
+    "sglang-simulator",
+    "sglang-parallel",
+    "sglang-tp"
+  ],
+  "branch": "issue-22",
+  "base_branch": "main",
+  "worktree_path": ".worktree\\issue-22",
+  "solution_pr_url": "https://github.com/Limixxx/inferflux/pull/52",
+  "solution_pr_number": 52,
+  "code_pr_url": null,
+  "code_pr_number": null,
+  "project_item_id": "PVTI_lAHOBeeNX84Bg4hjzg4NO7o",
+  "created_at": "2026-08-28T01:23:46Z",
+  "status": "In progress"
+}

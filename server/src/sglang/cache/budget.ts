@@ -3,7 +3,7 @@
 import type { ModelConfig, SimulatorConfig } from "../types";
 import { divEven } from "../core";
 
-/** calculateMemoryBudget 返回值结构 */
+/** calculateMemoryBudget / calculateMemoryBudgetParallel 返回值结构 */
 export interface MemoryBudgetResult {
   /** 可分配的 KV cache 页数（≥0，0 表示 OOM） */
   numPages: number;
@@ -11,6 +11,8 @@ export interface MemoryBudgetResult {
   modelMemory: number;
   /** CUDA Graph buffer 占用的显存（bytes） */
   graphBuffer: number;
+  /** 并行修正字段（仅 calculateMemoryBudgetParallel 填充） */
+  parallelCorrections?: import("../parallel/budget").ParallelMemoryCorrections;
 }
 
 /**

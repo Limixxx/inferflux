@@ -39,6 +39,7 @@ export {
 export type { PendingReqOpts } from "./entities";
 
 // K1: cache 抽象层 + K5 内存预算 + K2 实现 + K3 CacheManager
+// K1: cache 抽象层 + K5 内存预算 + K2 实现 + K4 RadixPrefixCache
 export {
   // K1 抽象类
   CacheSizeInfo,
@@ -59,9 +60,17 @@ export {
   NaiveCacheHandle,
   // K3 CacheManager
   CacheManager,
+  // K4 实现
+  RadixTreeNode,
+  RadixCacheHandle,
+  RadixPrefixCache,
 } from "./cache";
 
+// P0: 并行仿真基础设施 + P2a: DataParallelController
+export type { KeyFn } from "./cache";
+
 // P0: 并行仿真基础设施
+// P0: 并行仿真基础设施 + P1a: TP 张量并行仿真
 export {
   SimCommGroup as SimCommGroupImpl,
   SimCommGroupOpts,
@@ -69,6 +78,22 @@ export {
   ParallelTopology,
   ParallelTopologyOpts,
   ParallelMetrics,
+  DPRankState,
+  DataParallelController,
+  TPSimulator,
+  TPCommInfraSimulator,
+} from "./parallel";
+
+// P2b: DP Attention 仿真器
+export {
+  DPAttentionSimulator,
+  DPAttentionSimulatorOpts,
+// P1b: 并行组合内存预算 + 配置验证
+export {
+  calculateMemoryBudgetParallel,
+  validateParallelConfig,
+  ParallelMemoryCorrections,
+  ValidationResult,
 } from "./parallel";
 
 // P0: 仿真指标集合

@@ -1,0 +1,20 @@
+{
+  "issue_number": 23,
+  "issue_title": "[SGLang-Sim] P1b: 并行组合内存预算 calculate_memory_budget_parallel + validate_parallel_config 7 条约束",
+  "labels": [
+    "enhancement",
+    "sglang-simulator",
+    "sglang-high-risk",
+    "sglang-parallel"
+  ],
+  "branch": "issue-23",
+  "base_branch": "main",
+  "worktree_path": ".worktree\\issue-23",
+  "solution_pr_url": "https://github.com/Limixxx/inferflux/pull/47",
+  "solution_pr_number": 47,
+  "code_pr_url": null,
+  "code_pr_number": null,
+  "project_item_id": "PVTI_lAHOBeeNX84Bg4hjzg4NPTo",
+  "created_at": "2026-08-28T01:22:06Z",
+  "status": "In progress"
+}
