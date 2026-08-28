@@ -1,0 +1,20 @@
+{
+  "issue_number": 25,
+  "issue_title": "[SGLang-Sim] P2b: DP Attention Simulator — MLA 专用（all-gather → forward → slice）",
+  "labels": [
+    "enhancement",
+    "sglang-simulator",
+    "sglang-parallel",
+    "sglang-dp"
+  ],
+  "branch": "issue-25",
+  "base_branch": "main",
+  "worktree_path": ".worktree\\issue-25",
+  "solution_pr_url": "https://github.com/Limixxx/inferflux/pull/48",
+  "solution_pr_number": 48,
+  "code_pr_url": null,
+  "code_pr_number": null,
+  "project_item_id": "PVTI_lAHOBeeNX84Bg4hjzg4NPn0",
+  "created_at": "2026-08-28T01:22:04Z",
+  "status": "In progress"
+}

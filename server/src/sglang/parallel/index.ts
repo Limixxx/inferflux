@@ -16,6 +16,10 @@ export {
   ParallelMetrics,
 } from "./metrics";
 
+export {
+  DPAttentionSimulator,
+  DPAttentionSimulatorOpts,
+} from "./dp_attn";
 // P1a: TP 张量并行仿真
 export {
   TPSimulator,

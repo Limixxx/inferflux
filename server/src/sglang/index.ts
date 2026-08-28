@@ -76,6 +76,10 @@ export {
   TPCommInfraSimulator,
 } from "./parallel";
 
+// P2b: DP Attention 仿真器
+export {
+  DPAttentionSimulator,
+  DPAttentionSimulatorOpts,
 // P1b: 并行组合内存预算 + 配置验证
 export {
   calculateMemoryBudgetParallel,
