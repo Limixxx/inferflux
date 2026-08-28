@@ -85,6 +85,13 @@ export {
   calculateMemoryBudget,
 } from "./budget";
 
+// P1b: ParallelMemoryCorrections 从 parallel/budget re-export
+export type { ParallelMemoryCorrections } from "../parallel/budget";
+
 // K2: MockKVCachePool + NaivePrefixCache (§3.4.2 / §9.3b)
 export { MockKVCachePool, PageAllocation } from "./mha_pool";
 export { NaivePrefixCache, NaiveCacheHandle } from "./naive_cache";
+
+// K4: RadixPrefixCache (§9.8 / §3.3.5)
+export { RadixTreeNode, RadixCacheHandle, RadixPrefixCache } from "./radix_cache";
+export type { KeyFn } from "./radix_cache";

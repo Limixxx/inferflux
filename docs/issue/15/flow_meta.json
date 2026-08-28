@@ -1,0 +1,19 @@
+{
+  "issue_number": 15,
+  "issue_title": "[SGLang-Sim] K4: RadixPrefixCache（LRU 驱逐堆 + split_at + lock/unlock）",
+  "labels": [
+    "enhancement",
+    "sglang-simulator",
+    "sglang-kvcache"
+  ],
+  "branch": "issue-15",
+  "base_branch": "main",
+  "worktree_path": ".worktree\\issue-15",
+  "solution_pr_url": "https://github.com/Limixxx/inferflux/pull/51",
+  "solution_pr_number": 51,
+  "code_pr_url": null,
+  "code_pr_number": null,
+  "project_item_id": "PVTI_lAHOBeeNX84Bg4hjzg4NN-g",
+  "created_at": "2026-08-28T01:23:49Z",
+  "status": "In progress"
+}

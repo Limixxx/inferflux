@@ -24,3 +24,13 @@ export {
 export {
   TPCommInfraSimulator,
 } from "./tp_comm_infra";
+// P1b: 并行组合内存预算 + 配置验证
+export {
+  ParallelMemoryCorrections,
+  calculateMemoryBudgetParallel,
+} from "./budget";
+
+export {
+  ValidationResult,
+  validateParallelConfig,
+} from "./validate";
