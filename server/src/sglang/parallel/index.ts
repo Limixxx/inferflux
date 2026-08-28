@@ -1,3 +1,4 @@
+// parallel — P0: SimCommGroup/ParallelTopology/ParallelMetrics + P5: CPSimulator
 // parallel — P0: SimCommGroup/ParallelTopology/ParallelMetrics
 // parallel — P3a: SimMoeBackend
 // parallel — P0: SimCommGroup/ParallelTopology/ParallelMetrics + P1a: TPSimulator/TPCommInfraSimulator
@@ -19,6 +20,9 @@ export {
 } from "./metrics";
 
 export {
+  CPSimulator,
+  CPAttnResult,
+} from "./cp_simulator";
   SimMoeBackend,
 } from "./moe";
 

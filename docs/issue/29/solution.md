@@ -5,7 +5,7 @@ issue_type: Feature
 created: 2026-08-28
 updated: 2026-08-28
 status: draft
-review_round: 1
+review_round: 2
 ---
 
 # Issue #29 解决方案
@@ -25,7 +25,7 @@ Issue #29 要求在 `server/src/sglang/parallel/**` 下实现 P5 层 CP（Contex
 
 - 实现 CPSimulator 类，封装 CP 通信组（SimCommGroup group_type="cp"）和 KV all-gather 数据量计算
 - 长序列按 cp_size 切分：`seq_per_rank = ceil(seq_len, cp_size)`
-- KV all-gather 数据量公式：`seq_len × num_kv_heads × head_dim × dtype_size × num_layers × 2`（K+V 两份）
+- KV all-gather 数据量公式（单层，每 rank）：`seq_len_per_rank × num_kv_heads × head_dim × dtype_size × 2`（K+V 两份）
 - 通过 SimCommGroup("cp").allGather() 计算通信 ticks
 - cp_size=1 时 CPSimulator 不创建，simulate_attn_forward 返回 0（skip）
 - 在 MockEngine.forward_batch 中每层 attn 结束时调用 cp_sim.simulate_attn_forward，累加到 ParallelMetrics
@@ -89,24 +89,27 @@ export interface CPAttnResult {
 
 2. 计算 seq_len_per_rank = divCeil(seqLen, cpSize)
 
-3. 计算 KV all-gather 数据量:
-   kv_bytes = seqLen × modelConfig.numKvHeads × modelConfig.headDim × config.dtypeSize × modelConfig.numLayers × 2
+3. 计算 KV all-gather 数据量（单层，每 rank 持有的 KV）:
+   kv_bytes_per_rank = seqLenPerRank × modelConfig.numKvHeads × modelConfig.headDim × config.dtypeSize × 2
    （×2 是因为 K 和 V 两份）
+   注意：不含 numLayers 因子，因为本方法在 engine 的层循环中逐层调用
 
-4. 调用 commGroup.allGather([kv_bytes]) 计算通信 ticks
-   注意：allGather 接收 sizes 数组，这里传入 [kv_bytes] 表示每 rank 的数据量
+4. 调用 commGroup.allGather([kv_bytes_per_rank]) 计算通信 ticks
+   allGather 接收每 rank 的字节数数组
 
 5. 累加 totalCommTicks += commTicks
 
-6. 返回 { commTicks, allGatherBytes: kv_bytes, seqLenPerRank }
+6. 返回 { commTicks, allGatherBytes: kv_bytes_per_rank, seqLenPerRank }
 ```
 
 **关键设计点**：
 
-- `simulateAttnForward` 的参数为 `seqLen`（完整序列长度），不是 seq_per_rank，因为 KV all-gather 需要基于完整序列计算总数据量
+- `simulateAttnForward` 的参数为 `seqLen`（完整序列长度），内部自动计算 `seqLenPerRank`
 - `seq_len_per_rank = divCeil(seqLen, cpSize)`：处理序列长度不能整除 cp_size 的情况，向上取整
-- `kv_bytes` 包含 `num_layers` 因子：因为 CP 的 all-gather 在每层 attention 后都需要执行，但仿真中为简化，将所有层的 KV 通信合并为一次 all-gather 计算（等效于逐层累加，因为 all-gather 公式对数据量是线性的）
-- 返回 `CPAttnResult` 接口，包含通信 ticks、all-gather 字节数、每 rank 序列长度，便于 MockEngine 累加到 ParallelMetrics
+- `kv_bytes_per_rank` 不含 `num_layers` 因子：因为本方法代表单层 attention 后的 KV all-gather，在 MockEngine 的层循环中逐层调用并累加。总通信量 = num_layers × 单层通信量
+- `allGather` 接收的是每 rank 的字节数（基于 `seqLenPerRank`），而非完整序列的字节数
+- 构造函数使用已有的 `SimulatorConfig` 和 `ModelConfig` 类型，保持类型一致性
+- 返回 `CPAttnResult` 接口，包含通信 ticks、all-gather 字节数（每 rank）、每 rank 序列长度，便于 MockEngine 累加到 ParallelMetrics
 
 #### 2. parallel/index.ts 导出更新
 
@@ -196,7 +199,7 @@ export {
 | T1 | cp_size=1 时 simulateAttnForward 返回零 | cp_size=1 不创建通信组，返回 commTicks=0 |
 | T2 | cp_size=4 时 comm_ticks 为 cp_size=1 的 ~4× | 验证 CP 通信成本随 cp_size 增大而增加（allGather 数据量不变但组变大） |
 | T3 | seq_len 不能整除 cp_size 时 seq_per_rank 分布正确 | 如 seq_len=10, cp_size=4 → seq_per_rank=3 (divCeil) |
-| T4 | cp_size=4 时 allGatherBytes 计算正确 | kv_bytes = seq_len × num_kv_heads × head_dim × dtype_size × num_layers × 2 |
+| T4 | cp_size=4 时 allGatherBytes 计算正确 | kv_bytes_per_rank = seq_len_per_rank × num_kv_heads × head_dim × dtype_size × 2 |
 | T5 | cp_size=4 时 cpAllGatherCount 每层递增 | 每次 simulateAttnForward 调用 allGatherCount += 1 |
 | T6 | totalCommTicks 累加正确 | 多次调用后 totalCommTicks 等于各次返回值之和 |
 | T7 | cp_size=1 时 CPSimulator 为 null（skip） | MockEngine 中 cp_size=1 不创建 CPSimulator |
@@ -217,7 +220,7 @@ export {
 | B1 | seq_len=0 | kv_bytes=0, allGather 返回 latency_us（仅延迟） |
 | B2 | seq_len < cp_size（如 seq_len=2, cp_size=4） | seq_per_rank=1 (divCeil)，部分 rank 空转 |
 | B3 | cp_size=tp_size（如 cp_size=4, tp_size=4） | attn_tp_size=1，所有 TP rank 参与不同 CP chunk |
-| B4 | num_layers=1 | kv_bytes 仅含 1 层，通信量大幅减少 |
+| B4 | num_layers=1 | 总 cpCommTicks = 单层 commTicks，allGatherBytes 不含 numLayers 因子 |
 | B5 | cpEfficiency=1.0 与默认 0.90 对比 | efficiency=1.0 时通信成本更低 |
 | B6 | 极大 seq_len（如 128K） | kv_bytes 大，allGather 成本显著 |
 
