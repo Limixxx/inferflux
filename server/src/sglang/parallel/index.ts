@@ -1,4 +1,5 @@
 // parallel — P0: SimCommGroup/ParallelTopology/ParallelMetrics
+// parallel — P3a: SimMoeBackend
 
 export {
   CommGroupType,
@@ -15,3 +16,13 @@ export {
 export {
   ParallelMetrics,
 } from "./metrics";
+
+export {
+  SimMoeBackend,
+} from "./moe";
+
+export type {
+  SimMoeBackendOpts,
+  MoeRouteResult,
+  MoeForwardResult,
+} from "./moe";
