@@ -1,4 +1,6 @@
 // parallel — P0: SimCommGroup/ParallelTopology/ParallelMetrics + P5: CPSimulator
+// parallel — P0: SimCommGroup/ParallelTopology/ParallelMetrics
+// parallel — P3a: SimMoeBackend
 // parallel — P0: SimCommGroup/ParallelTopology/ParallelMetrics + P1a: TPSimulator/TPCommInfraSimulator
 
 export {
@@ -21,6 +23,14 @@ export {
   CPSimulator,
   CPAttnResult,
 } from "./cp_simulator";
+  SimMoeBackend,
+} from "./moe";
+
+export type {
+  SimMoeBackendOpts,
+  MoeRouteResult,
+  MoeForwardResult,
+} from "./moe";
 // P2a: DataParallelController
 export {
   DPRankState,
