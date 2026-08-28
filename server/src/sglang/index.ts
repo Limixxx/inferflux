@@ -39,7 +39,7 @@ export {
 
 export type { PendingReqOpts } from "./entities";
 
-// K1: cache 抽象层 + K5 内存预算 + K2 实现
+// K1: cache 抽象层 + K5 内存预算 + K2 实现 + K4 RadixPrefixCache
 export {
   // K1 抽象类
   CacheSizeInfo,
@@ -58,7 +58,13 @@ export {
   PageAllocation,
   NaivePrefixCache,
   NaiveCacheHandle,
+  // K4 实现
+  RadixTreeNode,
+  RadixCacheHandle,
+  RadixPrefixCache,
 } from "./cache";
+
+export type { KeyFn } from "./cache";
 
 // P0: 并行仿真基础设施
 export {
