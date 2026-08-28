@@ -64,6 +64,10 @@ export {
   RadixPrefixCache,
 } from "./cache";
 
+// P0: 并行仿真基础设施 + P2a: DataParallelController
+export type { KeyFn } from "./cache";
+
+// P0: 并行仿真基础设施
 // P0: 并行仿真基础设施 + P1a: TP 张量并行仿真
 export {
   SimCommGroup as SimCommGroupImpl,
@@ -72,6 +76,8 @@ export {
   ParallelTopology,
   ParallelTopologyOpts,
   ParallelMetrics,
+  DPRankState,
+  DataParallelController,
   TPSimulator,
   TPCommInfraSimulator,
 } from "./parallel";
