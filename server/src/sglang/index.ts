@@ -60,7 +60,7 @@ export {
   NaiveCacheHandle,
 } from "./cache";
 
-// P0: 并行仿真基础设施
+// P0: 并行仿真基础设施 + P2a: DataParallelController
 export {
   SimCommGroup as SimCommGroupImpl,
   SimCommGroupOpts,
@@ -68,6 +68,8 @@ export {
   ParallelTopology,
   ParallelTopologyOpts,
   ParallelMetrics,
+  DPRankState,
+  DataParallelController,
 } from "./parallel";
 
 // P0: 仿真指标集合

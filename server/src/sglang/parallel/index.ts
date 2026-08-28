@@ -15,3 +15,9 @@ export {
 export {
   ParallelMetrics,
 } from "./metrics";
+
+// P2a: DataParallelController
+export {
+  DPRankState,
+  DataParallelController,
+} from "./dp_controller";
