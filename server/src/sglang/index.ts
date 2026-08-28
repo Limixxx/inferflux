@@ -13,6 +13,7 @@ export {
   SimScheduler,
   SimCommGroup,
   CommGroupType,
+  TableManager,
 } from "./types";
 
 export type { SamplingDtype, SamplingParamsOpts } from "./types";
@@ -60,7 +61,7 @@ export {
   NaiveCacheHandle,
 } from "./cache";
 
-// P0: 并行仿真基础设施
+// P0+P5: 并行仿真基础设施 + CPSimulator
 export {
   SimCommGroup as SimCommGroupImpl,
   SimCommGroupOpts,
@@ -68,6 +69,8 @@ export {
   ParallelTopology,
   ParallelTopologyOpts,
   ParallelMetrics,
+  CPSimulator,
+  CPAttnResult,
 } from "./parallel";
 
 // P0: 仿真指标集合

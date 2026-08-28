@@ -223,7 +223,7 @@ test("T15 TableManager.tokenPool", () => {
   assert.strictEqual(tm.tokenPool[0].length, 4);
   assert.strictEqual(tm.tokenPool[4].length, 4);
   // all zeros
-  assert.ok(tm.tokenPool.every(row => row.every(v => v === 0)));
+  assert.ok(tm.tokenPool.every((row: number[]) => row.every((v: number) => v === 0)));
 });
 
 // ===== T16: TableManager 循环分配释放 =====

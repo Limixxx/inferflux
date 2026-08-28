@@ -1,4 +1,4 @@
-// parallel — P0: SimCommGroup/ParallelTopology/ParallelMetrics
+// parallel — P0: SimCommGroup/ParallelTopology/ParallelMetrics + P5: CPSimulator
 
 export {
   CommGroupType,
@@ -15,3 +15,8 @@ export {
 export {
   ParallelMetrics,
 } from "./metrics";
+
+export {
+  CPSimulator,
+  CPAttnResult,
+} from "./cp_simulator";
