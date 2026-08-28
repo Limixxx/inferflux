@@ -1,4 +1,4 @@
-// parallel — P0: SimCommGroup/ParallelTopology/ParallelMetrics + P1b: budget/validate
+// parallel — P0: SimCommGroup/ParallelTopology/ParallelMetrics + P1a: TPSimulator/TPCommInfraSimulator
 
 export {
   CommGroupType,
@@ -21,6 +21,14 @@ export {
   DPRankState,
   DataParallelController,
 } from "./dp_controller";
+// P1a: TP 张量并行仿真
+export {
+  TPSimulator,
+} from "./tp_simulator";
+
+export {
+  TPCommInfraSimulator,
+} from "./tp_comm_infra";
 // P1b: 并行组合内存预算 + 配置验证
 export {
   ParallelMemoryCorrections,
