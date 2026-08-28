@@ -1,4 +1,4 @@
-// parallel — P0: SimCommGroup/ParallelTopology/ParallelMetrics
+// parallel — P0: SimCommGroup/ParallelTopology/ParallelMetrics + P4: PPPipelineSimulator
 
 export {
   CommGroupType,
@@ -15,3 +15,8 @@ export {
 export {
   ParallelMetrics,
 } from "./metrics";
+
+export {
+  PipelineStepResult,
+  PPPipelineSimulator,
+} from "./pp";

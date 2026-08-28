@@ -100,6 +100,7 @@ export interface SimulatorConfig {
   ppNumMicroBatches: number;
   ppSendRecvCostPerByteTicks: number;
   ppPipelineSchedule: "1f1b" | "gpipe" | "interleaved";
+  ppInterleavedNumChunks: number;
 
   // ===== 通信成本通用配置 =====
   commBandwidthBytesPerTick: number;
@@ -167,6 +168,7 @@ export const DEFAULT_SIMULATOR_CONFIG: SimulatorConfig = {
   ppNumMicroBatches: 1,
   ppSendRecvCostPerByteTicks: 0.0005,
   ppPipelineSchedule: "1f1b",
+  ppInterleavedNumChunks: 2,
   commBandwidthBytesPerTick: 1_000_000,
   commOverlapWithCompute: true,
   networkBandwidthGBps: 100,
