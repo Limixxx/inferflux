@@ -15,3 +15,8 @@ export {
 export {
   ParallelMetrics,
 } from "./metrics";
+
+export {
+  DPAttentionSimulator,
+  DPAttentionSimulatorOpts,
+} from "./dp_attn";

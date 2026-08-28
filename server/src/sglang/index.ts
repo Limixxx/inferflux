@@ -70,6 +70,12 @@ export {
   ParallelMetrics,
 } from "./parallel";
 
+// P2b: DP Attention 仿真器
+export {
+  DPAttentionSimulator,
+  DPAttentionSimulatorOpts,
+} from "./parallel";
+
 // P0: 仿真指标集合
 export {
   SimulationMetrics,
