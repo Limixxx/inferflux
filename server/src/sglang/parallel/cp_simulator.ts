@@ -1,5 +1,6 @@
 // parallel/cp_simulator.ts — P5: CPSimulator Context Parallel KV all-gather (§10.8)
 
+import type { SimulatorConfig, ModelConfig } from "../types";
 import { SimCommGroup } from "./comm_group";
 import { divCeil } from "../core";
 
@@ -19,6 +20,9 @@ export interface CPAttnResult {
  * 仅当 cp_size > 1 时启用；否则 simulateAttnForward 返回零结果。
  * 每层 attention 结束后执行 KV all-gather，计算通信成本。
  * MLP 层不通信。
+ *
+ * simulateAttnForward 计算单层 attention 后的 KV all-gather 通信成本，
+ * 在 MockEngine.forwardBatch 的层循环中逐层调用并累加。
  */
 export class CPSimulator {
   readonly cpSize: number;
@@ -28,14 +32,12 @@ export class CPSimulator {
   private readonly numKvHeads: number;
   private readonly headDim: number;
   private readonly dtypeSize: number;
-  private readonly numLayers: number;
 
-  constructor(config: { cpSize: number; networkBandwidthGBps: number; networkLatencyUs: number; cpEfficiency: number; dtypeSize: number }, modelConfig: { numKvHeads: number; headDim: number; numLayers: number }) {
+  constructor(config: SimulatorConfig, modelConfig: ModelConfig) {
     this.cpSize = config.cpSize;
     this.numKvHeads = modelConfig.numKvHeads;
     this.headDim = modelConfig.headDim;
     this.dtypeSize = config.dtypeSize;
-    this.numLayers = modelConfig.numLayers;
 
     if (this.cpSize > 1) {
       this.commGroup = new SimCommGroup({
@@ -51,10 +53,13 @@ export class CPSimulator {
   }
 
   /**
-   * 仿真 CP attention 的 KV all-gather 通信成本
+   * 仿真单层 CP attention 的 KV all-gather 通信成本
+   *
+   * 每次 call 代表一个 layer 的 attention 结束后的 KV all-gather。
+   * 在 MockEngine.forwardBatch 的层循环中逐层调用。
    *
    * @param seqLen 完整序列长度
-   * @returns CPAttnResult 包含通信 ticks、all-gather 字节数、每 rank 序列长度
+   * @returns CPAttnResult 包含通信 ticks、all-gather 字节数（每 rank）、每 rank 序列长度
    */
   simulateAttnForward(seqLen: number): CPAttnResult {
     if (this.cpSize <= 1 || this.commGroup === null) {
@@ -63,15 +68,16 @@ export class CPSimulator {
 
     const seqLenPerRank = divCeil(seqLen, this.cpSize);
 
-    // KV all-gather 数据量: seqLen × num_kv_heads × head_dim × dtype_size × num_layers × 2
+    // 单层 KV all-gather 数据量（每 rank 持有 1/cp_size 的 KV）
+    // kv_bytes_per_rank = seq_len_per_rank × num_kv_heads × head_dim × dtype_size × 2
     // ×2 因为 K 和 V 两份
-    const kvBytes = seqLen * this.numKvHeads * this.headDim * this.dtypeSize * this.numLayers * 2;
+    const kvBytesPerRank = seqLenPerRank * this.numKvHeads * this.headDim * this.dtypeSize * 2;
 
-    // 调用 SimCommGroup("cp").allGather 计算通信 ticks
-    const commTicks = this.commGroup.allGather([kvBytes]);
+    // allGather 接收每 rank 的字节数数组
+    const commTicks = this.commGroup.allGather([kvBytesPerRank]);
 
     this.totalCommTicks += commTicks;
 
-    return { commTicks, allGatherBytes: kvBytes, seqLenPerRank };
+    return { commTicks, allGatherBytes: kvBytesPerRank, seqLenPerRank };
   }
 }

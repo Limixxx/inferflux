@@ -58,16 +58,17 @@ test("T1 cp_size=1 simulateAttnForward returns zero", () => {
 test("T2 cp_size=4 comm_ticks > 0", () => {
   const seqLen = 1024;
   const config4 = cpConfig(4);
+  const seqLenPerRank = divCeil(seqLen, 4); // 256
   const g4 = new SimCommGroup({
     groupType: "cp", size: 4,
     networkBandwidthGBps: config4.networkBandwidthGBps,
     latencyUs: config4.networkLatencyUs,
     efficiency: config4.cpEfficiency,
   });
-  const kvBytes = seqLen * config4.modelConfig.numKvHeads *
-    config4.modelConfig.headDim * config4.dtypeSize *
-    config4.modelConfig.numLayers * 2;
-  const ticks4 = g4.allGather([kvBytes]);
+  // 单层 kv_bytes_per_rank = seqLenPerRank * numKvHeads * headDim * dtypeSize * 2
+  const kvBytesPerRank = seqLenPerRank * config4.modelConfig.numKvHeads *
+    config4.modelConfig.headDim * config4.dtypeSize * 2;
+  const ticks4 = g4.allGather([kvBytesPerRank]);
   assert.ok(ticks4 > 0, `cp_size=4 comm_ticks should be >0, got ${ticks4}`);
 
   // 验证 CPSimulator 返回同样的结果
@@ -85,16 +86,25 @@ test("T3 divCeil seq_per_rank when seq_len not divisible", () => {
   assert.strictEqual(result.seqLenPerRank, 3);
 });
 
-// T4: cp_size=4 时 allGatherBytes 计算正确
-test("T4 allGatherBytes formula correct", () => {
+// T4: cp_size=4 时 allGatherBytes 计算正确（单层，使用 seqLenPerRank）
+test("T4 allGatherBytes formula correct (single layer, per-rank)", () => {
   const seqLen = 2048;
-  const config = cpConfig(4);
+  const cpSize = 4;
+  const config = cpConfig(cpSize);
   const sim = new CPSimulator(config, config.modelConfig);
   const result = sim.simulateAttnForward(seqLen);
-  const expected = seqLen * config.modelConfig.numKvHeads *
-    config.modelConfig.headDim * config.dtypeSize *
-    config.modelConfig.numLayers * 2;
+  const seqLenPerRank = divCeil(seqLen, cpSize); // 512
+  const expected = seqLenPerRank * config.modelConfig.numKvHeads *
+    config.modelConfig.headDim * config.dtypeSize * 2;
   assert.strictEqual(result.allGatherBytes, expected);
+});
+
+// T5: cp_size=4 时 cpAllGatherCount 每层递增
+test("T5 cpAllGatherCount increments per layer", () => {
+  const config = cpConfig(4);
+  const engine = new MockEngine(config);
+  engine.forwardBatch(1024);
+  assert.strictEqual(engine.metrics.parallel.cpAllGatherCount, config.modelConfig.numLayers);
 });
 
 // T6: totalCommTicks 累加正确
@@ -113,6 +123,62 @@ test("T7 cp_size=1 commGroup is null", () => {
   const sim = new CPSimulator(config, config.modelConfig);
   assert.strictEqual(sim.commGroup, null);
   assert.strictEqual(sim.cpSize, 1);
+});
+
+// ==========================================
+// 精确性断言 — 修复驳回问题4
+// ==========================================
+
+// P1: 总通信量精确性 — cp_size=4 forwardBatch 总 cpCommTicks 等于 numLayers × 单层 commTicks
+test("P1 precise total cpCommTicks = numLayers * singleLayerCommTicks", () => {
+  const config = cpConfig(4);
+  const sim = new CPSimulator(config, config.modelConfig);
+  const singleLayerResult = sim.simulateAttnForward(1024);
+  const singleLayerTicks = singleLayerResult.commTicks;
+
+  const engine = new MockEngine(config);
+  engine.forwardBatch(1024);
+  const expectedTotal = singleLayerTicks * config.modelConfig.numLayers;
+  assert.strictEqual(engine.metrics.parallel.cpCommTicks, expectedTotal,
+    `total cpCommTicks (${engine.metrics.parallel.cpCommTicks}) should equal ` +
+    `singleLayerTicks (${singleLayerTicks}) * numLayers (${config.modelConfig.numLayers}) = ${expectedTotal}`);
+});
+
+// P2: 精确的 kvBytes_per_rank 计算 — 验证公式中不含 numLayers
+test("P2 kvBytesPerRank does NOT include numLayers factor", () => {
+  const seqLen = 1024;
+  const cpSize = 4;
+  const config = cpConfig(cpSize);
+  const seqLenPerRank = divCeil(seqLen, cpSize);
+  // 单层每 rank 的 KV bytes
+  const expectedPerRank = seqLenPerRank * config.modelConfig.numKvHeads *
+    config.modelConfig.headDim * config.dtypeSize * 2;
+  // 不含 numLayers 的版本
+  const withLayers = expectedPerRank * config.modelConfig.numLayers;
+  const sim = new CPSimulator(config, config.modelConfig);
+  const result = sim.simulateAttnForward(seqLen);
+  // allGatherBytes 应等于不含 numLayers 的版本
+  assert.strictEqual(result.allGatherBytes, expectedPerRank);
+  // allGatherBytes 不应等于含 numLayers 的版本
+  assert.notStrictEqual(result.allGatherBytes, withLayers);
+});
+
+// P3: allGather 接收的 bytes 基于 seqLenPerRank 而非完整 seqLen
+test("P3 allGather bytes based on seqLenPerRank not full seqLen", () => {
+  const seqLen = 1024;
+  const cpSize = 4;
+  const config = cpConfig(cpSize);
+  const sim = new CPSimulator(config, config.modelConfig);
+  const result = sim.simulateAttnForward(seqLen);
+  const seqLenPerRank = divCeil(seqLen, cpSize);
+  // 用 seqLenPerRank 计算的 kvBytes
+  const kvPerRank = seqLenPerRank * config.modelConfig.numKvHeads *
+    config.modelConfig.headDim * config.dtypeSize * 2;
+  // 用完整 seqLen 计算的 kvBytes（错误方式）
+  const kvFull = seqLen * config.modelConfig.numKvHeads *
+    config.modelConfig.headDim * config.dtypeSize * 2;
+  assert.strictEqual(result.allGatherBytes, kvPerRank);
+  assert.notStrictEqual(result.allGatherBytes, kvFull);
 });
 
 // ==========================================
@@ -187,8 +253,24 @@ test("B3 cp_size=tp_size=4 CPSimulator works", () => {
   assert.strictEqual(result.seqLenPerRank, 256);
 });
 
-// B4: num_layers=1
-test("B4 numLayers=1 reduced kv_bytes", () => {
+// B4: num_layers=1 — 验证单层场景精确性
+test("B4 numLayers=1 precise total commTicks", () => {
+  const config1 = cpConfig(4, {
+    modelConfig: { ...DEFAULT_SIMULATOR_CONFIG.modelConfig, numLayers: 1 },
+  });
+  const sim1 = new CPSimulator(config1, config1.modelConfig);
+  const singleResult = sim1.simulateAttnForward(1024);
+
+  const engine = new MockEngine(config1);
+  engine.forwardBatch(1024);
+
+  // num_layers=1 时总 cpCommTicks 应等于单层 commTicks
+  assert.strictEqual(engine.metrics.parallel.cpCommTicks, singleResult.commTicks);
+  assert.strictEqual(engine.metrics.parallel.cpAllGatherCount, 1);
+});
+
+// B4b: numLayers=1 vs numLayers=32 allGatherBytes 相同（单层不含 numLayers 因子）
+test("B4b numLayers=1 vs numLayers=32 allGatherBytes identical per-layer", () => {
   const config32 = cpConfig(4);
   const config1 = cpConfig(4, {
     modelConfig: { ...DEFAULT_SIMULATOR_CONFIG.modelConfig, numLayers: 1 },
@@ -197,7 +279,16 @@ test("B4 numLayers=1 reduced kv_bytes", () => {
   const sim1 = new CPSimulator(config1, config1.modelConfig);
   const r32 = sim32.simulateAttnForward(1024);
   const r1 = sim1.simulateAttnForward(1024);
-  assert.strictEqual(r1.allGatherBytes, r32.allGatherBytes / 32);
+  // 单层 allGatherBytes 应相同（不含 numLayers 因子）
+  assert.strictEqual(r1.allGatherBytes, r32.allGatherBytes,
+    "Per-layer allGatherBytes should be the same regardless of numLayers");
+  // 但总 cpCommTicks 应为 numLayers 倍
+  const engine32 = new MockEngine(config32);
+  engine32.forwardBatch(1024);
+  const engine1 = new MockEngine(config1);
+  engine1.forwardBatch(1024);
+  assert.strictEqual(engine32.metrics.parallel.cpCommTicks,
+    engine1.metrics.parallel.cpCommTicks * 32);
 });
 
 // B5: cpEfficiency=1.0 vs 0.90
