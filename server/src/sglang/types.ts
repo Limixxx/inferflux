@@ -89,6 +89,7 @@ export interface SimulatorConfig {
   allToAllCostPerByteTicks: number;
   allToAllLatencyTicks: number;
   moeRoutingMode: "mock" | "hash" | "simulated";
+  moeRoutingSeed?: number;
   enableEplb: boolean;
 
   // ===== CP Context Parallel 配置 =====

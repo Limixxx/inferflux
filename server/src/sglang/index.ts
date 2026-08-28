@@ -78,6 +78,13 @@ export {
   ParallelTopology,
   ParallelTopologyOpts,
   ParallelMetrics,
+  SimMoeBackend,
+} from "./parallel";
+
+export type {
+  SimMoeBackendOpts,
+  MoeRouteResult,
+  MoeForwardResult,
   DPRankState,
   DataParallelController,
   TPSimulator,
@@ -100,3 +107,8 @@ export {
 export {
   SimulationMetrics,
 } from "./metrics";
+
+// P3a: MockEngine（含 MoE 集成）
+export {
+  MockEngine,
+} from "./engine";
