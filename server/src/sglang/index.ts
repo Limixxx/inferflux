@@ -9,7 +9,6 @@ export {
   SimRequestMsg,
   SimRespMsgTag,
   SimRespMsg,
-  CacheManager,
   SimScheduler,
   SimCommGroup,
   CommGroupType,
@@ -39,6 +38,7 @@ export {
 
 export type { PendingReqOpts } from "./entities";
 
+// K1: cache 抽象层 + K5 内存预算 + K2 实现 + K3 CacheManager
 // K1: cache 抽象层 + K5 内存预算 + K2 实现 + K4 RadixPrefixCache
 export {
   // K1 抽象类
@@ -58,6 +58,8 @@ export {
   PageAllocation,
   NaivePrefixCache,
   NaiveCacheHandle,
+  // K3 CacheManager
+  CacheManager,
   // K4 实现
   RadixTreeNode,
   RadixCacheHandle,
