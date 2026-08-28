@@ -12,6 +12,7 @@ export {
   CacheManager,
   SimScheduler,
   SimCommGroup,
+  CommGroupType,
 } from "./types";
 
 export type { SamplingDtype, SamplingParamsOpts } from "./types";
@@ -59,5 +60,17 @@ export {
   NaiveCacheHandle,
 } from "./cache";
 
-// K1: TableManager
-export { TableManager } from "./scheduler";
+// P0: 并行仿真基础设施
+export {
+  SimCommGroup as SimCommGroupImpl,
+  SimCommGroupOpts,
+  MockTPGroup,
+  ParallelTopology,
+  ParallelTopologyOpts,
+  ParallelMetrics,
+} from "./parallel";
+
+// P0: 仿真指标集合
+export {
+  SimulationMetrics,
+} from "./metrics";
