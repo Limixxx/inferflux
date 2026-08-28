@@ -70,6 +70,14 @@ export {
   ParallelMetrics,
 } from "./parallel";
 
+// P1b: 并行组合内存预算 + 配置验证
+export {
+  calculateMemoryBudgetParallel,
+  validateParallelConfig,
+  ParallelMemoryCorrections,
+  ValidationResult,
+} from "./parallel";
+
 // P0: 仿真指标集合
 export {
   SimulationMetrics,
