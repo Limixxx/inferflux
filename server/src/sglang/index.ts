@@ -9,7 +9,6 @@ export {
   SimRequestMsg,
   SimRespMsgTag,
   SimRespMsg,
-  CacheManager,
   SimScheduler,
   SimCommGroup,
   CommGroupType,
@@ -39,7 +38,7 @@ export {
 
 export type { PendingReqOpts } from "./entities";
 
-// K1: cache 抽象层 + K5 内存预算 + K2 实现
+// K1: cache 抽象层 + K5 内存预算 + K2 实现 + K3 CacheManager
 export {
   // K1 抽象类
   CacheSizeInfo,
@@ -58,6 +57,8 @@ export {
   PageAllocation,
   NaivePrefixCache,
   NaiveCacheHandle,
+  // K3 CacheManager
+  CacheManager,
 } from "./cache";
 
 // P0: 并行仿真基础设施
