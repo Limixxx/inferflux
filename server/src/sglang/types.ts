@@ -217,8 +217,7 @@ export interface SimRespMsg {
 import { TableManager } from "./scheduler";
 export { TableManager };
 
-import { BaseCacheHandle, MatchResult, InsertResult } from "./cache";
-export { BaseCacheHandle, MatchResult, InsertResult };
+import type { BaseCacheHandle, MatchResult } from "./cache";
 
 // ===== 占位接口（后续 Issue 实现） =====
 
