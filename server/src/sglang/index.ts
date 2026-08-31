@@ -40,6 +40,13 @@ export {
 
 export type { PendingReqOpts } from "./entities";
 
+// S2: scheduler 组件
+export {
+  PrefillAdder,
+  PrefillManager,
+  DecodeManager,
+} from "./scheduler";
+
 // K1: cache 抽象层 + K5 内存预算 + K2 实现 + K3 CacheManager
 // K1: cache 抽象层 + K5 内存预算 + K2 实现 + K4 RadixPrefixCache
 export {
