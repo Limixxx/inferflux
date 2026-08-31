@@ -89,6 +89,7 @@ export interface SimulatorConfig {
   allToAllCostPerByteTicks: number;
   allToAllLatencyTicks: number;
   moeRoutingMode: "mock" | "hash" | "simulated";
+  moeRoutingSeed?: number;
   enableEplb: boolean;
 
   // ===== CP Context Parallel 配置 =====
@@ -219,17 +220,10 @@ export interface SimRespMsg {
 import { TableManager } from "./scheduler";
 export { TableManager };
 
-import type { BaseCacheHandle, MatchResult } from "./cache";
+// K3: CacheManager class 引用
+export { CacheManager } from "./cache";
 
 // ===== 占位接口（后续 Issue 实现） =====
-
-/** 缓存管理器桩（K3 实现） */
-export interface CacheManager {
-  readonly availableSize: number;
-  matchReq(req: unknown): MatchResult;
-  lockReq(handle: BaseCacheHandle): void;
-  unlockReq(handle: BaseCacheHandle): void;
-}
 
 /** 调度器桩（S1 实现） */
 export interface SimScheduler {
