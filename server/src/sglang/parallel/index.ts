@@ -2,6 +2,7 @@
 // parallel — P0: SimCommGroup/ParallelTopology/ParallelMetrics + P5: CPSimulator
 // parallel — P0: SimCommGroup/ParallelTopology/ParallelMetrics
 // parallel — P3a: SimMoeBackend
+// parallel — P3b: EPLBSimulator
 // parallel — P0: SimCommGroup/ParallelTopology/ParallelMetrics + P1a: TPSimulator/TPCommInfraSimulator
 
 export {
@@ -24,9 +25,11 @@ export {
   PipelineStepResult,
   PPPipelineSimulator,
 } from "./pp";
+export {
   CPSimulator,
   CPAttnResult,
 } from "./cp_simulator";
+export {
   SimMoeBackend,
 } from "./moe";
 
@@ -35,6 +38,15 @@ export type {
   MoeRouteResult,
   MoeForwardResult,
 } from "./moe";
+// P3b: EPLBSimulator
+export {
+  EPLBSimulator,
+} from "./eplb";
+
+export type {
+  EPLBSimulatorOpts,
+  RebalanceResult,
+} from "./eplb";
 // P2a: DataParallelController
 export {
   DPRankState,

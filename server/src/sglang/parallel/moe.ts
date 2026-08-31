@@ -138,6 +138,11 @@ export class SimMoeBackend {
     return this.expertToRankMap[expertId];
   }
 
+  /** 获取当前各 expert 的累计负载快照（来自 metrics.epExpertLoad） */
+  get expertLoadCounts(): number[] {
+    return [...this.metrics.epExpertLoad];
+  }
+
   /**
    * 对一批 token 执行路由决策
    */
