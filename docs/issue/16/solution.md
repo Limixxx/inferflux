@@ -4,8 +4,8 @@ issue_number: 16
 issue_type: Feature
 created: 2026-08-31
 updated: 2026-08-31
-status: draft
-review_round: 1
+status: revised
+review_round: 2
 ---
 
 # Issue #16 解决方案
@@ -32,7 +32,7 @@ review_round: 1
 
 按照 §9.11 完整实现代码集，将 `PrefillAdder`、`PrefillManager`、`DecodeManager` 三个 class 实现于 `scheduler/index.ts`（与现有 `TableManager` 同文件）。核心设计决策如下：
 
-1. **同文件放置**：三个 class 与 `TableManager` 共存于 `scheduler/index.ts`，因它们体量均不大且高度内聚，拆分文件增加不必要的导入复杂度
+1. **同文件放置**：三个 class 与 `TableManager` 共存于 `scheduler/index.ts`，因它们体量均不大且高度内聚（PrefillAdder 仅在 PrefillManager.scheduleNextBatch 中实例化，DecodeManager 仅被前两者引用），拆分文件增加不必要的导入复杂度。当前三个类合计约 200 行，与 TableManager 的 37 行处于同一量级，单文件保持可读性。若 S3 阶段新增 `SimScheduler` 类导致文件膨胀超过 400 行，届时再拆分为独立模块。
 2. **TypeScript 适配**：
    - Python 的 `Req | ChunkedReq | None` 联合返回类型 -> TS 的 `Req | ChunkedReq | null`
    - Python 的 `Set[Req]` -> TS 的 `Set<Req>`（利用 Req 基于 rid 的引用唯一性）
@@ -70,6 +70,83 @@ review_round: 1
 - lock 操作：将匹配的前缀节点从 evictable 移入 protected，`evictable_size` 减小
 - 第二次检查（lock 后）：`available_size` 可能减小，若此时仍不足则需 unlock 并放弃
 
+**锁与异常安全保证（回应评审意见 §1）**：
+
+`tryAddOne` 的 lock-unlock 生命周期严格遵循以下规则，确保任何异常/失败路径下均不会遗留锁：
+
+| 失败点 | lock 状态 | 回滚动作 | 代码路径 |
+|--------|-----------|----------|----------|
+| 步骤 2 第一次 available_size 检查失败 | **未 lock** | 无需回滚，直接 return null | `return null` |
+| 步骤 3 token budget 不足 | **未 lock** | 无需回滚，直接 return null | `return null` |
+| 步骤 5 第二次 available_size 检查失败 | **已 lock** | `cacheManager.unlock(handle)` 后 return null | `unlock → return null` |
+| 步骤 6 tableManager.allocate() 抛出异常 | **已 lock** | 在 try-catch 中捕获异常，执行 `unlock(handle)` + `free(tableIdx)`（若已分配），然后 re-throw 或 return null | 见下方异常处理伪码 |
+| 步骤 7/7b token 复制失败（理论上不会发生，仅数组赋值） | **已 lock** | 同上，unlock + free | |
+
+异常处理封装伪码（TypeScript）：
+
+```typescript
+tryAddOne(pendingReq: PendingReq): Req | ChunkedReq | null {
+  // ... 步骤 0-4 ...
+  // 步骤 4: lock
+  this.cacheManager.lock(handle);
+
+  try {
+    // 步骤 5: 第二次检查
+    if (estimatedLen + this.reservedSize > this.cacheManager.availableSize) {
+      this.cacheManager.unlock(handle);
+      return null;
+    }
+    // 步骤 6: 分配 table_idx
+    const tableIdx = this.tableManager.allocate();
+    try {
+      // 步骤 7/7b/8/9: 复制 token、决定 chunk_size
+      // ...（正常逻辑）
+    } catch (err) {
+      // token 复制或后续逻辑异常（防御性）
+      this.tableManager.free(tableIdx);
+      this.cacheManager.unlock(handle);
+      throw err;  // 向上传播，由调度器决定处理策略
+    }
+  } catch (err) {
+    // 步骤 5 的 unlock 已在内部处理；
+    // 此处仅捕获 allocate() 抛出的异常
+    this.cacheManager.unlock(handle);
+    return null;  // 分配失败视为资源不足，静默返回 null
+  }
+}
+```
+
+关键保证：
+- lock 后的所有失败路径均有对应的 unlock 调用
+- allocate 成功后的异常路径同时释放 tableIdx 和 unlock
+- 不存在"已 lock 但未 unlock"的返回路径
+
+**并发与竞态说明（回应评审意见 §2）**：
+
+仿真器采用 **单线程 tick 驱动模型**：`SimScheduler.run_tick()` 由外部仿真循环串行调用，每个 tick 内依次执行 `_process_one_msg` → `_schedule_next_batch` → `_forward` → `_process_last_data`。因此：
+
+- **不存在多线程并发**：PrefillAdder.tryAddOne、PrefillManager.scheduleNextBatch、DecodeManager.filterReqs 均在同一 tick 的同步执行上下文中调用，不存在跨线程的 lock 竞争
+- **不存在跨 tick 竞态**：每个 tick 结束后，所有 lock 已被后续流程（cache_req/unlock）妥善处理，下一 tick 开始时不存在残留的锁状态
+- **不需要加锁机制**：所有状态变更（runningReqs、pendingList、consumedTokens 等）均在单线程内完成，TypeScript 单线程事件循环保证可见性
+
+真实 SGLang 的多进程 TP 架构中确实存在调度竞态，但仿真器故意简化了这一层——技术报告 §1 明确指出仿真器用于研究调度策略与内存管理，不需要真实的多进程通信。
+
+**原子性与一致性保证（回应评审意见 §3）**：
+
+在 `tryAddOne` 中，资源分配与写入分为三个阶段，每个阶段失败时回滚前序阶段的资源：
+
+| 阶段 | 操作 | 失败回滚 |
+|------|------|----------|
+| A: Cache 锁定 | `lock(handle)` | unlock(handle) |
+| B: Table 分配 | `allocate()` -> tableIdx | free(tableIdx) + unlock(handle) |
+| C: Token/Page 写入 | 写入 token_pool、page_table | free(tableIdx) + unlock(handle)（写入是数组赋值，覆盖即可，无需显式清除） |
+
+关键设计点：
+- **allocate_paged 与 token_pool 写入的顺序保证**：根据 §9.11 的设计，`allocate_paged`（写 page_table 的 extend 部分）在 `_prepare_batch` 中统一执行，不在 `tryAddOne` 内执行。因此 `tryAddOne` 仅负责 token_pool 的写入和 page_table cached 部分的写入，这两者均为简单的数组赋值，不存在部分写入风险
+- **page_table 的 cached 部分写入**：`handle.getMatchedIndices()` 返回只读数组，直接赋值给 `page_table[tableIdx]` 的前 `cachedLen` 个位置，TypeScript 数组赋值是原子操作
+- **token_pool 的写入**：同样为简单的数组切片赋值，不存在中间状态暴露的风险
+- **若 allocate_paged 在 _prepare_batch 中失败**：此时所有 req 的 tableIdx 已分配，需要整体回滚当前 batch（释放所有 tableIdx + unlock 所有 handle），由 SimScheduler 层面的错误处理负责（S3 阶段实现）
+
 **_tryAddOneChunked 流程**：
 
 | 步骤 | 操作 | 说明 |
@@ -81,7 +158,9 @@ review_round: 1
 | 5 | 决定 chunk_size，复制本 chunk 的 token 到 token_pool | |
 | 6 | 若 `!is_chunked` 则加入 decodeManager | 最后一个 chunk 转为完整 Req |
 
-**续接中不调用 lock 的原因**：chunked 请求的 `cacheHandle` 在首次 `tryAddOne` 时已经 lock，续接路径复用该 handle，无需再次 lock。
+续接中不调用 lock 的原因：chunked 请求的 `cacheHandle` 在首次 `tryAddOne` 时已经 lock，续接路径复用该 handle，无需再次 lock。
+
+**_tryAddOneChunked 的异常安全**：续接路径无需 lock/unlock 操作（handle 已锁定），也无需 allocate/free（复用已有 tableIdx），因此不存在锁泄漏或资源泄漏风险。唯一的失败点是步骤 3 的资源/budget 检查，此时直接 return null，无需任何回滚。
 
 #### 2. PrefillManager 类
 
@@ -105,7 +184,7 @@ review_round: 1
 
 核心职责：管理可 decode 的请求集合，生成 decode batch，计算 inflightTokens。
 
-**inflightTokens 计算公式（§9.11）**：
+**inflightTokens 计算公式（§9.11，回应评审意见 §4）**：
 
 ```
 tokens_reserved = (pageSize - 1) * len(runningReqs)
@@ -114,6 +193,14 @@ inflightTokens = sum(req.remainLen for req in runningReqs) + tokens_reserved
 
 - `tokens_reserved`：每个 running req 因页对齐最多浪费 `pageSize - 1` 个 token 位置
 - `remainLen`：`maxDeviceLen - deviceLen`，即请求剩余可解码长度
+
+**reservedSize 的语义与范围**（回应评审意见 §4 详细说明）：
+
+| 问题 | 回答 |
+|------|------|
+| 是否包含即将进入 decode 的 tokens？ | **不包含**。`inflightTokens` 仅统计当前已在 `runningReqs` 中的请求。即将进入 decode 的请求在 `tryAddOne` 步骤 10 被 `addReq` 加入 `runningReqs` 后，将在下一个 tick 的 `scheduleNextBatch` 中反映到 `inflightTokens` |
+| 是否计入 chunked 剩余量？ | **不计入**。ChunkedReq 不加入 `runningReqs`（§9.11 中 `ChunkedReq.canDecode = false`），其剩余 token 仅在下一个 tick 的续接路径中处理。这符合 §9.11 的设计：chunked prefill 的资源需求由 `available_size` 检查覆盖，而非 `reservedSize` |
+| 与技术报告公式一致性 | 完全一致。`inflightTokens` = `sum(remainLen) + (pageSize-1) * len(runningReqs)`，其中 `remainLen = maxDeviceLen - deviceLen`，对应 §9.11 `DecodeManager.inflight_tokens` 属性 |
 
 **filterReqs 语义**：每次 forward 后调用，更新 `runningReqs`：
 
@@ -167,6 +254,19 @@ runningReqs = (runningReqs | newReqs) 中 canDecode 为 true 的子集
 | T21 | PrefillManager + DecodeManager 集成 - 短 prompt 全流程 | addOneReq -> scheduleNextBatch -> Req 加入 decodeManager -> decodeManager.scheduleNextBatch |
 | T22 | PrefillManager + DecodeManager 集成 - 长 prompt 两次 tick | 第一次 chunked -> 第二次续接完成 -> 加入 decodeManager |
 
+### 扩展测试用例（回应评审意见 §6）
+
+| 编号 | 测试名称 | 验证内容 |
+|------|---------|---------|
+| T23 | PrefillAdder - lock 后 unlock 回滚 | 第二次 available_size 检查失败后，验证 cache_handle 已被正确 unlock（后续相同请求可重新 lock） |
+| T24 | PrefillAdder - tableManager 分配失败 | 模拟 tableManager.availableSize=0 导致 allocate() 抛异常，验证 lock 已被释放、无资源泄漏 |
+| T25 | PrefillAdder - 连续多次 tryAddOne 的一致性 | 同一个 PrefillAdder 实例连续添加多个请求，验证 consumedTokens 累积正确、各请求状态独立 |
+| T26 | PrefillManager - 多个 chunked 请求续接优先级 | 两个请求均产生 ChunkedReq，验证下一 tick 两个续接请求均优先于新请求 |
+| T27 | DecodeManager.filterReqs - 空 newReqs | 仅过滤现有 runningReqs 中 canDecode=false 的请求 |
+| T28 | DecodeManager - pageSize=1 时 tokens_reserved=0 | inflightTokens = sum(remainLen)，无页对齐浪费 |
+| T29 | PrefillAdder._tryAddOneChunked - 续接时资源不足 | 第二次 tick 续接时 available_size 不足，return null，保留 pendingReq 在队列中等待下次 tick |
+| T30 | PrefillAdder - 全缓存命中（extendLen=0） | chunk_size=0，is_chunked=false，返回 Req，consumedTokens 不增加 |
+
 ### 边界条件覆盖
 
 | 编号 | 边界条件 | 预期行为 |
@@ -178,6 +278,9 @@ runningReqs = (runningReqs | newReqs) 中 canDecode 为 true 的子集
 | B5 | DecodeManager - pageSize=1 时 tokens_reserved=0 | inflightTokens = sum(remainLen)，无页对齐浪费 |
 | B6 | DecodeManager.filterReqs - 空 newReqs | 仅过滤现有 runningReqs |
 | B7 | PrefillAdder._tryAddOneChunked - 续接时资源不足 | return null，保留 pendingReq 在队列中等待下次 tick |
+| B8 | PrefillAdder - 第二次 available_size 检查失败后重试 | unlock 后同一请求在下次 tick 可重新成功 lock（验证无残留锁） |
+| B9 | tableManager 分配耗尽 | allocate() 抛出异常，lock 被释放，tryAddOne 返回 null |
+| B10 | DecodeManager.inflightTokens - 无 running 请求 | 返回 0 |
 
 ## 风险与注意事项
 
@@ -188,3 +291,6 @@ runningReqs = (runningReqs | newReqs) 中 canDecode 为 true 的子集
 - **chunked 续接中 tableIdx 复用**：续接路径不复用 `ChunkedReq` 实例本身，而是从中提取 `cacheHandle` 和 `tableIdx`，创建新的 `Req` 或 `ChunkedReq`。这确保每个 batch 中的 Req 实例独立，避免跨 batch 的状态耦合。
 - **两次 available_size 检查在 naive backend 下的退化**：NaivePrefixCache 的 `lockHandle` 为 noop，不会改变 `evictableSize`。因此在 naive backend 下，两次检查的 `availableSize` 值相同，第二次检查不会额外拒绝请求。但这不影响代码正确性——两次检查的逻辑仍然执行，只是效果在 naive 下退化为冗余。当 K4（RadixPrefixCache）实现后，lock 会真正改变 `evictableSize`，两次检查的差异将体现。
 - **Batch phase 标识**：当前 `Batch` class 无 `phase` 属性。`scheduleNextBatch` 通过设置 `readyIds` 来区分 prefill/decode batch。若后续需要 `phase` 字段用于统计或指标，可在 S3 中扩展。
+- **锁与异常安全的实现承诺**：tryAddOne 中 lock 后的所有失败路径均有对应的 unlock 调用，通过 try-catch-finally 结构保证。tableManager.allocate() 的异常会被捕获并执行 unlock 后返回 null。续接路径 `_tryAddOneChunked` 因无需 lock 操作，不存在锁泄漏风险。
+- **单线程模型下的竞态豁免**：仿真器采用单线程 tick 驱动模型，不存在多线程并发。因此不需要并发控制机制（mutex、CAS 等），两次 available_size 检查在单线程上下文中是安全的。真实 SGLang 的多进程竞态不在仿真范围内。
+- **原子性保证**：tryAddOne 中的资源分配与写入按 A(Cache锁定) → B(Table分配) → C(写入) 三阶段进行，每个阶段失败时回滚前序阶段的资源。page_table 的 extend 部分写入延迟到 `_prepare_batch` 中的 `allocate_paged`，避免重复分配和不一致风险。
