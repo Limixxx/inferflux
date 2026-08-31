@@ -86,12 +86,15 @@ export {
   CPSimulator,
   CPAttnResult,
   SimMoeBackend,
+  EPLBSimulator,
 } from "./parallel";
 
 export type {
   SimMoeBackendOpts,
   MoeRouteResult,
   MoeForwardResult,
+  EPLBSimulatorOpts,
+  RebalanceResult,
   DPRankState,
   DataParallelController,
   TPSimulator,
@@ -102,6 +105,7 @@ export type {
 export {
   DPAttentionSimulator,
   DPAttentionSimulatorOpts,
+} from "./parallel";
 // P1b: 并行组合内存预算 + 配置验证
 export {
   calculateMemoryBudgetParallel,
@@ -121,6 +125,7 @@ export {
 export {
   GraphRunner,
   Sampler,
+} from "./engine";
 // P3a: MockEngine（含 MoE 集成）
 export {
   MockEngine,

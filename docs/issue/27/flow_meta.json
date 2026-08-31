@@ -1,0 +1,20 @@
+{
+  "issue_number": 27,
+  "issue_title": "[SGLang-Sim] P3b: EPLBSimulator — EP 负载均衡（100 步周期 + 方差阈值重平衡）",
+  "labels": [
+    "enhancement",
+    "sglang-simulator",
+    "sglang-parallel",
+    "sglang-ep"
+  ],
+  "branch": "issue-27",
+  "base_branch": "main",
+  "worktree_path": ".worktree\\issue-27",
+  "solution_pr_url": "https://github.com/Limixxx/inferflux/pull/68",
+  "solution_pr_number": 68,
+  "code_pr_url": null,
+  "code_pr_number": null,
+  "project_item_id": "PVTI_lAHOBeeNX84Bg4hjzg4NP_o",
+  "created_at": "2026-08-31T01:23:17Z",
+  "status": "In progress"
+}
