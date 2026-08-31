@@ -98,7 +98,8 @@ export class PrefillAdder {
     const extendLen = prefixLen - cachedLen;
 
     // 步骤 2: 第一次 available_size 检查（宽松，lock 前）
-    const estimatedLen = extendLen;
+    // estimatedLen 包含 extend 部分 + decode 输出长度（§9.11 L3208）
+    const estimatedLen = extendLen + pendingReq.outputLen;
     if (estimatedLen + this.reservedSize > this.cacheManager.availableSize) {
       return null;
     }
@@ -154,6 +155,7 @@ export class PrefillAdder {
             samplingParams: pendingReq.samplingParams,
           });
           creq.deviceLen = cachedLen + chunkSize;
+          creq.maxDeviceLen = cachedLen + chunkSize;
           (creq as unknown as { cacheHandle: BaseCacheHandle | null }).cacheHandle = handle;
           (creq as unknown as { tableIdx: number }).tableIdx = tableIdx;
           return creq;
@@ -165,6 +167,7 @@ export class PrefillAdder {
             samplingParams: pendingReq.samplingParams,
           });
           req.deviceLen = prefixLen;
+          req.maxDeviceLen = cachedLen + extendLen + pendingReq.outputLen;
           (req as unknown as { cacheHandle: BaseCacheHandle | null }).cacheHandle = handle;
           (req as unknown as { tableIdx: number }).tableIdx = tableIdx;
           this.decodeManager.addReq(req);
@@ -192,8 +195,8 @@ export class PrefillAdder {
     const tableIdx = (prevReq as unknown as { tableIdx: number }).tableIdx;
     const handle = (prevReq as unknown as { cacheHandle: BaseCacheHandle | null }).cacheHandle!;
 
-    // 资源检查
-    if (extendLen + this.reservedSize > this.cacheManager.availableSize) {
+    // 资源检查（续接路径同样包含 outputLen，§9.11 L3290）
+    if (extendLen + pendingReq.outputLen + this.reservedSize > this.cacheManager.availableSize) {
       return null;
     }
 
@@ -220,6 +223,7 @@ export class PrefillAdder {
         samplingParams: pendingReq.samplingParams,
       });
       creq.deviceLen = cachedLen + chunkSize;
+      creq.maxDeviceLen = cachedLen + chunkSize;
       (creq as unknown as { cacheHandle: BaseCacheHandle | null }).cacheHandle = handle;
       (creq as unknown as { tableIdx: number }).tableIdx = tableIdx;
       return creq;
@@ -231,6 +235,7 @@ export class PrefillAdder {
         samplingParams: pendingReq.samplingParams,
       });
       req.deviceLen = pendingReq.inputLen;
+      req.maxDeviceLen = pendingReq.inputLen + pendingReq.outputLen;
       (req as unknown as { cacheHandle: BaseCacheHandle | null }).cacheHandle = handle;
       (req as unknown as { tableIdx: number }).tableIdx = tableIdx;
       this.decodeManager.addReq(req);

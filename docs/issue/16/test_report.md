@@ -51,6 +51,14 @@ test_result: pass
 | B8 | PrefillAdder - retry after second available_size check fail | ✅ pass |
 | B9 | tableManager allocate exhausted | ✅ pass |
 | B10 | DecodeManager.inflightTokens - no running requests | ✅ pass |
+| R1 | estimatedLen includes outputLen - first check in tryAddOne | ✅ pass |
+| R2 | estimatedLen includes outputLen - tryAddOne passes when fits | ✅ pass |
+| R3 | estimatedLen includes outputLen - _tryAddOneChunked resource check | ✅ pass |
+| R4 | maxDeviceLen explicitly set - ChunkedReq from tryAddOne | ✅ pass |
+| R5 | maxDeviceLen explicitly set - Req from tryAddOne | ✅ pass |
+| R6 | maxDeviceLen explicitly set - Req from _tryAddOneChunked | ✅ pass |
+| R7 | maxDeviceLen explicitly set - ChunkedReq from _tryAddOneChunked | ✅ pass |
+| R8 | estimatedLen with outputLen=0 equals extendLen | ✅ pass |
 
 ## 类型检查
 - 结果: pass（scheduler/index.ts 和 sglang-s2.test.ts 无类型错误）
@@ -70,3 +78,9 @@ test_result: pass
 - 无 running 请求：inflightTokens = 0（B10）
 - filterReqs 空集合：仅过滤已有请求（T27, B6）
 - chunked 请求续接优先级：放回队列头部优先调度（T26, B4）
+- estimatedLen 包含 outputLen：extend+output 超出 availableSize 时拒绝（R1, R3）
+- estimatedLen 包含 outputLen：extend+output 在 availableSize 内时通过（R2）
+- outputLen=0 时 estimatedLen 退化为 extendLen（R8）
+- ChunkedReq.maxDeviceLen = cachedLen + chunkSize（R4, R7）
+- Req.maxDeviceLen = cachedLen + extendLen + outputLen（R5）
+- 续接 Req.maxDeviceLen = inputLen + outputLen（R6）

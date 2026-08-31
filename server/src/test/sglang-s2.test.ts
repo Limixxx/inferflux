@@ -922,6 +922,186 @@ test("B10 DecodeManager.inflightTokens - no running requests", () => {
   assert.strictEqual(dm.inflightTokens, 0);
 });
 
+// ===== 驳回修复验证: estimatedLen 包含 outputLen =====
+
+// ===== R1: estimatedLen 包含 outputLen — tryAddOne 第一次检查 =====
+test("R1 estimatedLen includes outputLen - first check in tryAddOne", () => {
+  // 构造场景：extendLen 能通过 availableSize 检查，但 extendLen + outputLen 不能
+  // extendLen=3, outputLen=20, availableSize=15
+  // 3 <= 15 但 3+20=23 > 15 -> 应该 return null
+  const { cm } = makeCacheManager(15, 1);
+  const tm = makeTableManager();
+  const dm = makeDecodeManager();
+  const adder = new PrefillAdder(100, cm, tm, dm);
+
+  const sp = new SamplingParams({ maxNewTokens: 20 });
+  const pr = new PendingReq({ rid: 1, inputIds: [1, 2, 3], samplingParams: sp });
+  const result = adder.tryAddOne(pr);
+  // estimatedLen = 3 + 20 = 23 > 15 -> null
+  assert.strictEqual(result, null, "should reject when estimatedLen (extend+output) exceeds availableSize");
+});
+
+// ===== R2: estimatedLen 包含 outputLen — tryAddOne 通过场景 =====
+test("R2 estimatedLen includes outputLen - tryAddOne passes when fits", () => {
+  // extendLen=3, outputLen=10, availableSize=1024 -> 通过
+  const { cm } = makeCacheManager(1024, 1);
+  const tm = makeTableManager();
+  const dm = makeDecodeManager();
+  const adder = new PrefillAdder(100, cm, tm, dm);
+
+  const sp = new SamplingParams({ maxNewTokens: 10 });
+  const pr = new PendingReq({ rid: 1, inputIds: [1, 2, 3], samplingParams: sp });
+  const result = adder.tryAddOne(pr);
+  // estimatedLen = 3 + 10 = 13 <= 1024 -> passes
+  assert.ok(result instanceof Req, "should succeed when estimatedLen fits in availableSize");
+});
+
+// ===== R3: estimatedLen 包含 outputLen — _tryAddOneChunked 资源检查 =====
+test("R3 estimatedLen includes outputLen - _tryAddOneChunked resource check", () => {
+  // 第一轮: 创建 ChunkedReq
+  const { cm } = makeCacheManager(1024, 1);
+  const tm = makeTableManager();
+  const dm = makeDecodeManager();
+  const adder1 = new PrefillAdder(2, cm, tm, dm);
+  const sp = new SamplingParams({ maxNewTokens: 20 });
+  const pr1 = new PendingReq({ rid: 1, inputIds: [1, 2, 3, 4, 5], samplingParams: sp });
+  const result1 = adder1.tryAddOne(pr1);
+  assert.ok(result1 instanceof ChunkedReq);
+
+  // 第二轮: 极小容量，extendLen=3, outputLen=20, estimatedLen=23 > 1
+  const smallCm = new CacheManager(1, 1, Array.from({ length: 129 }, () => new Array(8192).fill(0)), "naive");
+  const adder2 = new PrefillAdder(100, smallCm, tm, dm);
+  const pr2 = new PendingReq({
+    rid: 1,
+    inputIds: [1, 2, 3, 4, 5],
+    samplingParams: sp,
+    chunkedReq: result1 as ChunkedReq,
+  });
+  const result2 = adder2.tryAddOne(pr2);
+  assert.strictEqual(result2, null, "should reject chunked continuation when estimatedLen exceeds availableSize");
+});
+
+// ===== R4: maxDeviceLen 显式设置 — ChunkedReq =====
+test("R4 maxDeviceLen explicitly set - ChunkedReq from tryAddOne", () => {
+  const { cm } = makeCacheManager();
+  const tm = makeTableManager();
+  const dm = makeDecodeManager();
+  const adder = new PrefillAdder(2, cm, tm, dm);
+
+  const sp = new SamplingParams({ maxNewTokens: 10 });
+  const pr = new PendingReq({ rid: 1, inputIds: [1, 2, 3, 4, 5], samplingParams: sp });
+  const result = adder.tryAddOne(pr);
+
+  assert.ok(result instanceof ChunkedReq);
+  // cachedLen=0 (naive always miss), chunkSize=min(5,2)=2
+  // maxDeviceLen 应为 cachedLen + chunkSize = 0 + 2 = 2
+  assert.strictEqual((result as ChunkedReq).maxDeviceLen, 2,
+    "ChunkedReq.maxDeviceLen should equal cachedLen + chunkSize");
+  assert.strictEqual((result as ChunkedReq).deviceLen, 2);
+  assert.strictEqual((result as ChunkedReq).remainLen, 0,
+    "ChunkedReq.remainLen should be 0 since maxDeviceLen == deviceLen");
+});
+
+// ===== R5: maxDeviceLen 显式设置 — Req from tryAddOne =====
+test("R5 maxDeviceLen explicitly set - Req from tryAddOne", () => {
+  const { cm } = makeCacheManager();
+  const tm = makeTableManager();
+  const dm = makeDecodeManager();
+  const adder = new PrefillAdder(100, cm, tm, dm);
+
+  const sp = new SamplingParams({ maxNewTokens: 10 });
+  const pr = new PendingReq({ rid: 1, inputIds: [1, 2, 3], samplingParams: sp });
+  const result = adder.tryAddOne(pr);
+
+  assert.ok(result instanceof Req);
+  // cachedLen=0, extendLen=3, outputLen=10
+  // maxDeviceLen = cachedLen + extendLen + outputLen = 0 + 3 + 10 = 13
+  assert.strictEqual((result as Req).maxDeviceLen, 13,
+    "Req.maxDeviceLen should equal cachedLen + extendLen + outputLen");
+  assert.strictEqual((result as Req).remainLen, 10,
+    "Req.remainLen = maxDeviceLen - deviceLen = 13 - 3 = 10");
+});
+
+// ===== R6: maxDeviceLen 显式设置 — Req from _tryAddOneChunked =====
+test("R6 maxDeviceLen explicitly set - Req from _tryAddOneChunked", () => {
+  const { cm } = makeCacheManager();
+  const tm = makeTableManager();
+  const dm = makeDecodeManager();
+
+  // 第一轮: chunked
+  const adder1 = new PrefillAdder(2, cm, tm, dm);
+  const sp = new SamplingParams({ maxNewTokens: 10 });
+  const pr1 = new PendingReq({ rid: 1, inputIds: [1, 2, 3, 4, 5], samplingParams: sp });
+  const result1 = adder1.tryAddOne(pr1);
+  assert.ok(result1 instanceof ChunkedReq);
+
+  // 第二轮: 续接完成 -> Req
+  const pr2 = new PendingReq({
+    rid: 1,
+    inputIds: [1, 2, 3, 4, 5],
+    samplingParams: sp,
+    chunkedReq: result1 as ChunkedReq,
+  });
+  const adder2 = new PrefillAdder(100, cm, tm, dm);
+  const result2 = adder2.tryAddOne(pr2);
+
+  assert.ok(result2 instanceof Req);
+  // inputLen=5, outputLen=10 -> maxDeviceLen = 5 + 10 = 15
+  assert.strictEqual((result2 as Req).maxDeviceLen, 15,
+    "Req.maxDeviceLen from continuation should equal inputLen + outputLen");
+  assert.strictEqual((result2 as Req).remainLen, 10,
+    "Req.remainLen = 15 - 5 = 10");
+});
+
+// ===== R7: maxDeviceLen 显式设置 — ChunkedReq from _tryAddOneChunked =====
+test("R7 maxDeviceLen explicitly set - ChunkedReq from _tryAddOneChunked", () => {
+  const { cm } = makeCacheManager();
+  const tm = makeTableManager();
+  const dm = makeDecodeManager();
+
+  // 第一轮: chunked (budget=1 -> chunkSize=1)
+  const adder1 = new PrefillAdder(1, cm, tm, dm);
+  const sp = new SamplingParams({ maxNewTokens: 10 });
+  const pr1 = new PendingReq({ rid: 1, inputIds: [1, 2, 3, 4, 5], samplingParams: sp });
+  const result1 = adder1.tryAddOne(pr1);
+  assert.ok(result1 instanceof ChunkedReq);
+  assert.strictEqual((result1 as ChunkedReq).maxDeviceLen, 1);
+
+  // 第二轮: 仍 chunked (budget=1 -> chunkSize=1, extendLen=4 -> still chunked)
+  const pr2 = new PendingReq({
+    rid: 1,
+    inputIds: [1, 2, 3, 4, 5],
+    samplingParams: sp,
+    chunkedReq: result1 as ChunkedReq,
+  });
+  const adder2 = new PrefillAdder(1, cm, tm, dm);
+  const result2 = adder2.tryAddOne(pr2);
+  assert.ok(result2 instanceof ChunkedReq);
+  // cachedLen=1 (from prevReq.deviceLen), chunkSize=1
+  // maxDeviceLen = 1 + 1 = 2
+  assert.strictEqual((result2 as ChunkedReq).maxDeviceLen, 2,
+    "ChunkedReq.maxDeviceLen from continuation should equal cachedLen + chunkSize");
+  assert.strictEqual((result2 as ChunkedReq).remainLen, 0);
+});
+
+// ===== R8: outputLen=0 时 estimatedLen == extendLen =====
+test("R8 estimatedLen with outputLen=0 equals extendLen", () => {
+  // outputLen=0 时 estimatedLen = extendLen + 0 = extendLen
+  // 此时资源检查退化为原始逻辑
+  const { cm } = makeCacheManager(5, 1);
+  const tm = makeTableManager();
+  const dm = makeDecodeManager();
+  const adder = new PrefillAdder(100, cm, tm, dm);
+
+  const sp = new SamplingParams({ maxNewTokens: 0 });
+  const pr = new PendingReq({ rid: 1, inputIds: [1, 2, 3], samplingParams: sp });
+  const result = adder.tryAddOne(pr);
+  // estimatedLen = 3 + 0 = 3 <= 5 -> passes
+  assert.ok(result instanceof Req, "should succeed when outputLen=0 and extendLen fits");
+  assert.strictEqual((result as Req).maxDeviceLen, 3,
+    "maxDeviceLen = cachedLen + extendLen + 0 = 3");
+});
+
 // Summary
 console.log("\n=== S2 结果 ===");
 console.log(`通过: ${passed}  失败: ${failed}`);
