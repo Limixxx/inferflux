@@ -27,6 +27,7 @@ export {
   bytesPerElement,
   Req,
   Batch,
+  ForwardOutput,
 } from "./core";
 
 export type { ReqOpts } from "./core";
@@ -67,6 +68,7 @@ export {
   RadixPrefixCache,
 } from "./cache";
 
+// P0: 并行仿真基础设施 + P4: PPPipelineSimulator
 // P0+P5: 并行仿真基础设施 + CPSimulator
 // P0: 并行仿真基础设施 + P2a: DataParallelController
 export type { KeyFn } from "./cache";
@@ -80,6 +82,7 @@ export {
   ParallelTopology,
   ParallelTopologyOpts,
   ParallelMetrics,
+  PPPipelineSimulator,
   CPSimulator,
   CPAttnResult,
   SimMoeBackend,
@@ -107,11 +110,17 @@ export {
   ValidationResult,
 } from "./parallel";
 
+export type { PipelineStepResult } from "./parallel";
+
 // P0: 仿真指标集合
 export {
   SimulationMetrics,
 } from "./metrics";
 
+// P4: 仿真引擎
+export {
+  GraphRunner,
+  Sampler,
 // P3a: MockEngine（含 MoE 集成）
 export {
   MockEngine,

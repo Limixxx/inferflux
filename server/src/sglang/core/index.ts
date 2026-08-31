@@ -223,3 +223,21 @@ export class Batch {
     return this.reqs.get(id);
   }
 }
+
+// ===== ForwardOutput 接口（§10.5.3） =====
+
+/**
+ * Forward 输出（§10.5.3）
+ *
+ * 行为合约：
+ * - isIntermediate=false（最后 PP stage 或 pp_size=1）：
+ *   logits 非空，sampledIds 非空，sampler 被调用，samplingCounter 增加
+ * - isIntermediate=true（中间 PP stage）：
+ *   logits 非空（通信传给下一 stage），sampledIds=null，
+ *   sampler 不被调用，samplingCounter 不增加
+ */
+export interface ForwardOutput {
+  logits: number[] | null;      // 模型输出 logits
+  sampledIds: number[] | null;  // 采样结果（中间 stage 为 null）
+  isIntermediate: boolean;      // true=中间 PP stage，不采样
+}

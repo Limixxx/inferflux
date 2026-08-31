@@ -1,0 +1,21 @@
+{
+  "issue_number": 28,
+  "issue_title": "[SGLang-Sim] P4: PPPipelineSimulator — 3 种调度（gpipe/1f1b/interleaved）+ bubble + is_pp_last 仅最后 stage 采样",
+  "labels": [
+    "enhancement",
+    "sglang-simulator",
+    "sglang-high-risk",
+    "sglang-parallel",
+    "sglang-pp"
+  ],
+  "branch": "issue-28",
+  "base_branch": "main",
+  "worktree_path": ".worktree\\issue-28",
+  "solution_pr_url": "https://github.com/Limixxx/inferflux/pull/62",
+  "solution_pr_number": 62,
+  "code_pr_url": null,
+  "code_pr_number": null,
+  "project_item_id": "PVTI_lAHOBeeNX84Bg4hjzg4NQKA",
+  "created_at": "2026-08-28T01:20:41Z",
+  "status": "In progress"
+}
