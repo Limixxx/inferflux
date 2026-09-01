@@ -11,16 +11,29 @@ import { SimulationMetrics } from "../metrics";
 
 // ===== GraphRunner =====
 
-/** CUDA Graph 运行器桩 */
+/** CUDA Graph 运行器（§3.3.1 / §9.11 SimGraphRunner） */
 export class GraphRunner {
   private readonly enableCudaGraph: boolean;
   private readonly cudaGraphBs: number[] | null;
   private readonly cudaGraphMaxBs: number | null;
+  readonly dummyReq: Req;
 
-  constructor(config: SimulatorConfig) {
+  constructor(config: SimulatorConfig, dummyReq?: Req) {
     this.enableCudaGraph = config.enableCudaGraph;
     this.cudaGraphBs = config.cudaGraphBs;
     this.cudaGraphMaxBs = config.cudaGraphMaxBs;
+    // dummyReq 用于 CUDA Graph padding（table_idx = max_running_req）
+    if (dummyReq) {
+      this.dummyReq = dummyReq;
+    } else {
+      this.dummyReq = new Req({
+        rid: -1,
+        inputIds: [0],
+        samplingParams: new SamplingParams(),
+      });
+      this.dummyReq.deviceLen = 1;
+      this.dummyReq.maxDeviceLen = 1;
+    }
   }
 
   /** 判断 batch 是否可以使用 CUDA Graph replay */
@@ -28,7 +41,8 @@ export class GraphRunner {
     if (!this.enableCudaGraph) return false;
     const bs = batch.reqs.size;
     if (this.cudaGraphBs !== null) {
-      return this.cudaGraphBs.includes(bs);
+      // 找到 >= bs 的最小 graph 尺寸（§9.11 使用 some 而非 includes）
+      return this.cudaGraphBs.some(cbs => cbs >= bs);
     }
     if (this.cudaGraphMaxBs !== null) {
       return bs <= this.cudaGraphMaxBs;
@@ -39,6 +53,16 @@ export class GraphRunner {
   /** CUDA Graph replay（桩实现） */
   replay(batch: Batch): number[] {
     return new Array(batch.reqs.size * 128).fill(0);
+  }
+
+  /** 将 batch padding 到 CUDA graph 尺寸（§9.11 pad_batch） */
+  padBatch(batch: Batch): void {
+    if (this.cudaGraphBs !== null && this.enableCudaGraph) {
+      const bs = batch.reqs.size;
+      const paddedSize = this.cudaGraphBs.find(cbs => cbs >= bs) ?? bs;
+      // 在 batch 上记录 padding 信息（不影响 batch.reqs 本身）
+      (batch as unknown as { paddedSize: number }).paddedSize = paddedSize;
+    }
   }
 }
 

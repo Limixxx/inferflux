@@ -52,11 +52,44 @@ test_result: pass
 
 总计: 38 通过, 0 失败
 
+## 全量回归测试
+
+| 测试套件 | 用例数 | 结果 |
+|----------|--------|------|
+| P6 | 38 | ✅ pass |
+| P3a | 37 | ✅ pass |
+| P4 | 39 | ✅ pass |
+| S1 | 26 | ✅ pass |
+| S2 | 48 | ✅ pass |
+| P5 | 23 | ✅ pass |
+| P0 | 37 | ✅ pass |
+| K3 | 35 | ✅ pass |
+| P1a | 25 | ✅ pass |
+| P1b | 32 | ✅ pass |
+| P2a | 24 | ✅ pass |
+| P2b | 16 | ✅ pass |
+| P3b | 25 | ✅ pass |
+| S0 | 22 | ✅ pass |
+| K1 | 23 | ✅ pass |
+| K2 | 31 | ✅ pass |
+| K4 | 41 | ✅ pass |
+| K5 | 20 | ✅ pass |
+
+总计: 18 套件, 537 用例, 全部通过
+
 ## 类型检查
 
 - 结果: pass
-- `npm run build` (tsc --strict) 零错误零警告
-- `server/src/sglang/**` 生产代码中无 `any` 类型
+- `npx tsc --noEmit` 零错误
+
+## PR #79 驳回修复确认
+
+| 偏离项 | 修复描述 | 验证 |
+|--------|---------|------|
+| (1) SimSchedulerImpl 核心调度为桩 | 实现完整调度循环: _processOneMsg → _scheduleNextBatch → _forward → _processLastData | ✅ C6-T5~T7, B7 |
+| (2) 旧方法删除破坏兼容 | MockEngine 保留 forwardBatchReq/forwardBatchSeqLen 向后兼容方法 | ✅ B8 |
+| (3) 缺少 S3 组件 | SamplingParams.ignoreEos 属性; _overlap_tick 参数类型修正 | ✅ 类型检查通过 |
+| (4) GraphRunner 缺 dummyReq/padBatch + includes→some | canUseCudaGraph 使用 some(cbs => cbs >= bs); 添加 dummyReq 字段和 padBatch 方法 | ✅ 类型检查通过 |
 
 ## 边界条件覆盖
 

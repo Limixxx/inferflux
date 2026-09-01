@@ -1,5 +1,5 @@
 // scheduler — K1: TableManager + S2: PrefillAdder/PrefillManager/DecodeManager
-// P6: SimScheduler 实现（ParallelGroups 接入 + EPLB 集成 + globalStep）
+// P6: SimScheduler 实现（ParallelGroups 接入 + EPLB 集成 + globalStep + §9.11 完整调度循环）
 
 import { Req, Batch, SamplingParams } from "../core";
 import { ChunkedReq, PendingReq } from "../entities";
@@ -8,6 +8,7 @@ import type { BaseCacheHandle } from "../cache";
 import type { SimRequestMsg, SimRespMsg } from "../types";
 import type { ParallelGroups } from "../parallel/groups";
 import type { SimulationMetrics } from "../metrics";
+import type { ForwardOutput } from "../core";
 
 /** 管理 page_table 行分配（§3.3.6 / §9.11 完整实现） */
 export class TableManager {
@@ -451,12 +452,26 @@ export class PrefillManager {
 
 // ===== P6: SimScheduler 实现 =====
 
+/** Forward 调度结果，传递给 _forward */
+interface ForwardInput {
+  batch: Batch;
+  isPrefill: boolean;
+}
+
+/** Forward 返回数据，用于 _processLastData */
+interface ForwardData {
+  batch: Batch;
+  isPrefill: boolean;
+  output: ForwardOutput;
+}
+
 /**
- * SimScheduler — 仿真调度器（P6 ParallelGroups 集成）
+ * SimScheduler — 仿真调度器（P6 ParallelGroups 集成 + §9.11 完整调度循环）
  *
  * 在 S1 的调度逻辑基础上，接入 ParallelGroups：
- * - 构造器接收 optional ParallelGroups
+ * - 构造器接收 optional ParallelGroups + MockEngine
  * - add_request 路径中集成 dpController.select_rank_for_request
+ * - tick 包含完整调度循环：_processOneMsg → _scheduleNextBatch → _forward → _processLastData
  * - tick 末尾调用 EPLB maybe_rebalance（§10.4.4）
  * - 维护 _globalStep 供 EPLB 使用
  */
@@ -466,7 +481,19 @@ export class SimSchedulerImpl {
   private readonly _decodeManager: DecodeManager;
   private readonly _groups: ParallelGroups | null;
   private readonly _simMetrics: SimulationMetrics | null;
+  private readonly _engine: {
+    forwardBatch(
+      tokenIds: number[],
+      seqLen: number,
+      batch: Batch,
+      localBatchSizes?: number[],
+    ): ForwardOutput;
+  } | null;
+  private readonly _cacheManager: CacheManager | null;
+  private readonly _tableManager: TableManager | null;
   private _globalStep: number = 0;
+  private _lastData: ForwardData | null = null;
+  private _finishedReqs: Set<Req> = new Set();
 
   constructor(
     config: import("../types").SimulatorConfig,
@@ -474,12 +501,25 @@ export class SimSchedulerImpl {
     decodeManager: DecodeManager,
     parallelGroups?: ParallelGroups,
     simMetrics?: SimulationMetrics,
+    engine?: {
+      forwardBatch(
+        tokenIds: number[],
+        seqLen: number,
+        batch: Batch,
+        localBatchSizes?: number[],
+      ): ForwardOutput;
+    },
+    cacheManager?: CacheManager,
+    tableManager?: TableManager,
   ) {
     this._config = config;
     this._prefillManager = prefillManager;
     this._decodeManager = decodeManager;
     this._groups = parallelGroups ?? null;
     this._simMetrics = simMetrics ?? null;
+    this._engine = engine ?? null;
+    this._cacheManager = cacheManager ?? null;
+    this._tableManager = tableManager ?? null;
   }
 
   /** 当前全局步数 */
@@ -521,7 +561,7 @@ export class SimSchedulerImpl {
   }
 
   /**
-   * 执行一个调度 tick
+   * 执行一个调度 tick（§9.11）
    * @param incoming 进入的请求消息列表
    * @returns 响应消息列表
    */
@@ -533,55 +573,255 @@ export class SimSchedulerImpl {
   }
 
   /**
-   * Normal（非 overlap）tick
+   * Normal（非 overlap）tick（§9.11）
    *
-   * 步骤：
-   * 1. 处理 incoming 消息 → add_request
-   * 2. 调度 prefill/decode batch
-   * 3. forward + 结果处理
-   * 4. EPLB maybe_rebalance（tick 末尾）
-   * 5. 递增 globalStep
+   * 完整调度循环：
+   * 1. _processOneMsg — 处理 incoming 消息
+   * 2. _scheduleNextBatch — 调度 prefill/decode batch
+   * 3. _forward — 执行前向推理
+   * 4. _processLastData — 处理结果（finished 检测、资源释放）
+   * 5. EPLB maybe_rebalance（tick 末尾）
+   * 6. 递增 globalStep
    */
   private _normal_tick(incoming: SimRequestMsg[]): SimRespMsg[] {
     // 步骤 1：处理入队消息
     for (const msg of incoming) {
-      this.addRequest(msg);
+      this._processOneMsg(msg);
     }
 
-    // 步骤 2 & 3：调度 + forward + 结果处理（桩实现，后续 S1 Issue 完善）
-    const replies: SimRespMsg[] = [];
+    // 步骤 2：调度下一个 batch（prefill 优先，否则 decode）
+    const forwardInput = this._scheduleNextBatch();
 
-    // 步骤 4：EPLB maybe_rebalance（§10.4.4）
+    // 步骤 3：forward
+    const forwardOutput = forwardInput
+      ? this._forward(forwardInput)
+      : null;
+
+    // 步骤 4：处理 forward 结果
+    const replies: SimRespMsg[] = [];
+    if (forwardOutput !== null && forwardInput !== null) {
+      const data: ForwardData = { batch: forwardInput.batch, isPrefill: forwardInput.isPrefill, output: forwardOutput };
+      replies.push(...this._processLastData(data));
+    }
+
+    // 步骤 5：EPLB maybe_rebalance（§10.4.4）
     this._maybeEplbRebalance();
 
-    // 步骤 5：递增 globalStep
+    // 步骤 6：递增 globalStep
     this._globalStep += 1;
 
     return replies;
   }
 
   /**
-   * Overlap tick
+   * Overlap tick（§9.4 / §9.11）
    *
-   * 与 _normal_tick 类似，但支持 overlap scheduling。
-   * 步骤末尾同样调用 EPLB + 递增 globalStep。
+   * 完整 overlap 调度循环：
+   * Phase 1: 处理消息 + 调度下一批（CPU phase，可与上一批 GPU 重叠）
+   * Phase 2: forward 当前批（GPU phase）
+   * Phase 3: 处理上一批结果（CPU phase，仿真中与 Phase 2 串行但逻辑上并行）
    */
   private _overlap_tick(incoming: SimRequestMsg[]): SimRespMsg[] {
-    // 步骤 1：处理入队消息
+    // Phase 1: 消息处理 + 调度
     for (const msg of incoming) {
-      this.addRequest(msg);
+      this._processOneMsg(msg);
+    }
+    const forwardInput = this._scheduleNextBatch();
+
+    // Phase 2: forward 当前批
+    const forwardOutput = forwardInput
+      ? this._forward(forwardInput)
+      : null;
+
+    // Phase 3: 处理上一批结果（与当前 GPU forward 逻辑上并行，仿真中串行执行）
+    const replies: SimRespMsg[] = [];
+    if (this._lastData !== null) {
+      replies.push(...this._processLastData(this._lastData));
+      this._lastData = null;
     }
 
-    // 步骤 2 & 3：overlap 调度 + forward + 结果处理（桩实现，后续 S1 Issue 完善）
-    const replies: SimRespMsg[] = [];
+    // 保存当前批数据给下一 tick
+    if (forwardOutput !== null && forwardInput !== null) {
+      this._lastData = { batch: forwardInput.batch, isPrefill: forwardInput.isPrefill, output: forwardOutput };
+    }
 
-    // 步骤 4：EPLB maybe_rebalance（§10.4.4）
+    // EPLB maybe_rebalance（§10.4.4）
     this._maybeEplbRebalance();
 
-    // 步骤 5：递增 globalStep
+    // 递增 globalStep
     this._globalStep += 1;
 
     return replies;
+  }
+
+  // ===== §9.11 调度循环核心方法 =====
+
+  /** 处理单条入队消息（§9.11 _process_one_msg） */
+  private _processOneMsg(msg: SimRequestMsg): void {
+    if (msg.tag === "req_in" || msg.tag === "req_resume") {
+      this.addRequest(msg);
+    }
+    // AbortBackendMsg 处理可以后续扩展
+  }
+
+  /**
+   * 调度下一个 batch（§9.11 _schedule_next_batch）
+   * 优先调度 prefill，无 prefill 则调度 decode
+   */
+  private _scheduleNextBatch(): ForwardInput | null {
+    const prefillBudget = this._config.maxExtendTokens;
+
+    // 优先 prefill
+    const prefillBatch = this._prefillManager.scheduleNextBatch(prefillBudget);
+    if (prefillBatch !== null) {
+      // _prepare_batch: 分配 KV cache 页
+      if (this._cacheManager) {
+        for (const req of prefillBatch.reqs.values()) {
+          this._cacheManager.allocatePaged(req as unknown as {
+            deviceLen: number; cachedLen: number; tableIdx: number;
+          });
+        }
+      }
+      return { batch: prefillBatch, isPrefill: true };
+    }
+
+    // 否则 decode
+    const decodeBatch = this._decodeManager.scheduleNextBatch();
+    if (decodeBatch !== null) {
+      return { batch: decodeBatch, isPrefill: false };
+    }
+
+    return null;
+  }
+
+  /**
+   * 执行前向推理（§9.11 _forward）
+   *
+   * 1. 提取 tokenIds / seqLen 从 batch 中
+   * 2. 调用 engine.forwardBatch
+   * 3. 对每个 req 调用 completeOne（ChunkedReq 除外）
+   * 4. DecodeManager.filterReqs 更新可 decode 集合
+   */
+  private _forward(input: ForwardInput): ForwardOutput | null {
+    if (!this._engine) return null;
+
+    const batch = input.batch;
+    // 提取 tokenIds（取第一个 req 的 inputIds）
+    const firstReq = batch.reqs.values().next().value;
+    const tokenIds = firstReq ? firstReq.inputIds : [];
+    const seqLen = tokenIds.length;
+
+    // 调用 engine.forwardBatch
+    const output = this._engine.forwardBatch(tokenIds, seqLen, batch);
+
+    // 对每个 req 调用 completeOne（ChunkedReq 除外）
+    for (const req of batch.reqs.values()) {
+      if (!(req instanceof ChunkedReq)) {
+        req.completeOne();
+      }
+    }
+
+    // DecodeManager.filterReqs 更新可 decode 集合
+    const newReqs = [...batch.reqs.values()].filter(r => !(r instanceof ChunkedReq));
+    this._decodeManager.filterReqs(newReqs);
+
+    return output;
+  }
+
+  /**
+   * 处理 forward 结果（§9.11 _process_last_data）
+   *
+   * 1. 对每个 req：
+   *    a. ChunkedReq → 跳过
+   *    b. req.appendHost(nextToken)
+   *    c. finished = !canDecode || nextToken == eos
+   *    d. finished → DecodeManager.removeReq + _freeReqResources
+   *    e. prefill 非 finished → CacheManager.cacheReq(finished=false)
+   * 2. 返回 DetokenizeMsg 列表
+   */
+  private _processLastData(data: ForwardData): SimRespMsg[] {
+    const replies: SimRespMsg[] = [];
+    const batch = data.batch;
+    const output = data.output;
+
+    if (output.sampledIds === null) {
+      // 中间 PP stage，无采样结果
+      return replies;
+    }
+
+    const nextTokens = output.sampledIds;
+    const newFinishedReqs: Set<Req> = new Set();
+
+    // 进入 lazy_free_region（如果 cacheManager 可用）
+    if (this._cacheManager) {
+      this._cacheManager.beginLazyFree();
+    }
+
+    try {
+      let tokenIdx = 0;
+      for (const req of batch.reqs.values()) {
+        if (req instanceof ChunkedReq) {
+          continue; // ChunkedReq 采样结果被丢弃
+        }
+
+        const nextToken = nextTokens[tokenIdx] ?? 0;
+        tokenIdx++;
+
+        req.appendHost(nextToken);
+
+        const finished = !req.canDecode ||
+          (nextToken === this._config.eosTokenId && !req.samplingParams.ignoreEos);
+
+        replies.push({
+          tag: finished ? "resp_done" : "resp_token",
+          uid: req.rid,
+          nextToken,
+          finished,
+        });
+
+        if (finished && !this._finishedReqs.has(req)) {
+          this._decodeManager.removeReq(req);
+          this._freeReqResources(req);
+          newFinishedReqs.add(req);
+        } else if (data.isPrefill && !finished) {
+          if (this._cacheManager) {
+            this._cacheManager.cacheReq(
+              req as unknown as {
+                inputIds: number[]; cachedLen: number;
+                tableIdx: number; cacheHandle: BaseCacheHandle | null;
+              },
+              false,
+            );
+          }
+        }
+      }
+    } finally {
+      // 退出 lazy_free_region
+      if (this._cacheManager) {
+        this._cacheManager.endLazyFree();
+      }
+    }
+
+    this._finishedReqs = newFinishedReqs;
+    return replies;
+  }
+
+  /** 释放请求资源（§9.11 _free_req_resources） */
+  private _freeReqResources(req: Req): void {
+    if (this._tableManager) {
+      const tableIdx = (req as unknown as { tableIdx?: number }).tableIdx;
+      if (tableIdx !== undefined) {
+        this._tableManager.free(tableIdx);
+      }
+    }
+    if (this._cacheManager) {
+      this._cacheManager.freeCache(
+        req as unknown as {
+          inputIds: number[]; cachedLen: number;
+          tableIdx: number; cacheHandle: BaseCacheHandle | null;
+        },
+      );
+    }
   }
 
   /**

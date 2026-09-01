@@ -9,6 +9,7 @@ import {
   PrefillManager,
   DecodeManager,
   TableManager,
+  CacheManager,
   validateParallelConfig,
   ParallelTopology,
 } from "../sglang";
@@ -62,6 +63,16 @@ function moeMlaConfig(extra?: Partial<SimulatorConfig>): SimulatorConfig {
       ...(extra?.modelConfig ?? {}),
     }),
   });
+}
+
+/** Helper: 创建 PrefillManager（含必要依赖） */
+function makePrefillManager(decodeMgr: DecodeManager): PrefillManager {
+  const pageSize = 16;
+  const numPages = 1024;
+  const pageTable = Array.from({ length: 128 }, () => new Array(numPages).fill(0));
+  const cacheMgr = new CacheManager(numPages, pageSize, pageTable, "naive");
+  const tableMgr = new TableManager(128, pageTable);
+  return new PrefillManager(cacheMgr, tableMgr, decodeMgr);
 }
 
 // ==========================================
@@ -455,15 +466,16 @@ test("C6-T4 SimSchedulerImpl exported", () => {
 test("C6-T5 SimSchedulerImpl can be constructed", () => {
   const config = makeConfig({});
   const decodeMgr = new DecodeManager(1);
-  const tableMgr = new TableManager(128, [[0]]);
-  const scheduler = new SimSchedulerImpl(config, {} as any, decodeMgr);
+  const prefillMgr = makePrefillManager(decodeMgr);
+  const scheduler = new SimSchedulerImpl(config, prefillMgr, decodeMgr);
   assert.strictEqual(scheduler.globalStep, 0);
 });
 
 test("C6-T6 SimSchedulerImpl runTick increments globalStep", () => {
   const config = makeConfig({ enableOverlap: false });
   const decodeMgr = new DecodeManager(1);
-  const scheduler = new SimSchedulerImpl(config, {} as any, decodeMgr);
+  const prefillMgr = makePrefillManager(decodeMgr);
+  const scheduler = new SimSchedulerImpl(config, prefillMgr, decodeMgr);
   scheduler.runTick([]);
   assert.strictEqual(scheduler.globalStep, 1);
   scheduler.runTick([]);
@@ -482,8 +494,9 @@ test("C6-T7 SimSchedulerImpl with ParallelGroups has groups reference", () => {
     metrics,
   });
   const decodeMgr = new DecodeManager(1);
+  const prefillMgr = makePrefillManager(decodeMgr);
   const simMetrics = new SimulationMetrics();
-  const scheduler = new SimSchedulerImpl(config, {} as any, decodeMgr, groups, simMetrics);
+  const scheduler = new SimSchedulerImpl(config, prefillMgr, decodeMgr, groups, simMetrics);
   assert.ok(scheduler.groups !== null);
   assert.ok(scheduler.groups!.eplbSim !== null);
   assert.ok(scheduler.groups!.moeBackend !== null);
@@ -588,9 +601,10 @@ test("B7 EPLB called at tick end not in forwardBatch", () => {
     numPages: 1024,
     metrics,
   });
-  const simMetrics = new SimulationMetrics();
   const decodeMgr = new DecodeManager(1);
-  const scheduler = new SimSchedulerImpl(config, {} as any, decodeMgr, groups, simMetrics);
+  const prefillMgr = makePrefillManager(decodeMgr);
+  const simMetrics = new SimulationMetrics();
+  const scheduler = new SimSchedulerImpl(config, prefillMgr, decodeMgr, groups, simMetrics);
 
   // Run 100 ticks to trigger EPLB check interval
   for (let i = 0; i < 101; i++) {
