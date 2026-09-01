@@ -53,6 +53,7 @@ export interface SamplingParamsOpts {
   minP?: number;
   stopTokenIds?: number[];
   skipSpecialTokens?: boolean;
+  ignoreEos?: boolean;
   dtype?: SamplingDtype;
   ignoreEos?: boolean;
 }
@@ -71,6 +72,7 @@ export class SamplingParams {
   readonly minP: number;
   readonly stopTokenIds: number[];
   readonly skipSpecialTokens: boolean;
+  readonly ignoreEos: boolean;
   readonly dtype: SamplingDtype;
   readonly ignoreEos: boolean;
 
@@ -84,6 +86,7 @@ export class SamplingParams {
     this.minP = opts?.minP ?? 0.0;
     this.stopTokenIds = opts?.stopTokenIds ?? [];
     this.skipSpecialTokens = opts?.skipSpecialTokens ?? true;
+    this.ignoreEos = opts?.ignoreEos ?? false;
     this.dtype = opts?.dtype ?? "float16";
     this.ignoreEos = opts?.ignoreEos ?? false;
   }
@@ -199,6 +202,13 @@ export class Batch {
   nextId: number;
   schedulerThinkingBatch: boolean;
 
+  // S3 扩展属性（§9.11）
+  paddedReqs: (Req | null)[];
+  inputIds: number[];
+  positions: number[];
+  outLoc: number[];
+  attnMetadata: unknown;
+
   constructor() {
     this.reqs = new Map();
     this.initLen = 0;
@@ -210,6 +220,12 @@ export class Batch {
     this.readyIds = [];
     this.nextId = 0;
     this.schedulerThinkingBatch = false;
+
+    this.paddedReqs = [];
+    this.inputIds = [];
+    this.positions = [];
+    this.outLoc = [];
+    this.attnMetadata = null;
   }
 
   /** 从 readyIds 取下一个就绪请求 */
@@ -227,10 +243,46 @@ export class Batch {
   }
 }
 
-// ===== ForwardOutput 接口（§10.5.3） =====
+// ===== MockEvent 类（§9.11 L3693） =====
+
+/** 仿真事件同步桩（对齐 §9.11 copy_done_event） */
+export class MockEvent {
+  private _synchronized: boolean = false;
+
+  /** 标记事件已完成（仿真中立即完成） */
+  record(): void {
+    this._synchronized = true;
+  }
+
+  /** 同步等待事件完成（仿真中为 noop，立即返回） */
+  synchronize(): void {
+    this._synchronized = true;
+  }
+}
+
+// ===== BatchSamplingArgs 类（§9.11 L3568-3577） =====
+
+/** 采样参数批处理封装 */
+export class BatchSamplingArgs {
+  readonly temperatures: number[] | null;
+  readonly topK: number[];
+  readonly topP: number[];
+
+  constructor(opts: { temperatures: number[] | null; topK?: number[]; topP?: number[] }) {
+    this.temperatures = opts.temperatures;
+    this.topK = opts.topK ?? [];
+    this.topP = opts.topP ?? [];
+  }
+
+  get isGreedy(): boolean {
+    return this.temperatures === null;
+  }
+}
+
+// ===== ForwardOutput 接口（§10.5.3 / §9.11 L3690-3694） =====
 
 /**
- * Forward 输出（§10.5.3）
+ * Forward 输出（§10.5.3 + §9.11 L3690-3694）
  *
  * 行为合约：
  * - isIntermediate=false（最后 PP stage 或 pp_size=1）：
@@ -238,9 +290,22 @@ export class Batch {
  * - isIntermediate=true（中间 PP stage）：
  *   logits 非空（通信传给下一 stage），sampledIds=null，
  *   sampler 不被调用，samplingCounter 不增加
+ *
+ * S3 扩展字段（对齐 §9.11）：
+ * - nextTokensGpu/nextTokensCpu/copyDoneEvent：采样结果及同步事件
+ * - prefillBatchTime/decodeBatchTime：时间模拟 ticks
+ * - isChunkPrefill/isGraphCapture/isPpLast：标识字段
  */
 export interface ForwardOutput {
-  logits: number[] | null;      // 模型输出 logits
-  sampledIds: number[] | null;  // 采样结果（中间 stage 为 null）
-  isIntermediate: boolean;      // true=中间 PP stage，不采样
+  logits: number[][] | null;           // 模型输出 logits（2D: [batchSize, vocabSize]）
+  nextTokensGpu: number[] | null;     // GPU 端采样结果
+  nextTokensCpu: number[] | null;     // CPU 端采样结果副本
+  copyDoneEvent: MockEvent;           // 拷贝完成事件（对齐 §9.11 L3693）
+  isIntermediate: boolean;            // true=中间 PP stage，不采样
+  prefillBatchTime?: number;          // prefill 时间模拟 ticks
+  decodeBatchTime?: number;           // decode 时间模拟 ticks
+  isChunkPrefill?: boolean;           // batch 是否包含 ChunkedReq
+  isGraphCapture?: boolean;           // 是否使用 CUDA Graph
+  isPpLast?: boolean;                 // 是否为 PP 最后 stage
+  sampledIds?: number[] | null;       // 兼容 P4: 采样结果
 }

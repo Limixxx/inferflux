@@ -9,13 +9,17 @@ export {
   SimRequestMsg,
   SimRespMsgTag,
   SimRespMsg,
-  SimScheduler,
   SimCommGroup,
   CommGroupType,
   TableManager,
+  BatchSchedulerMsg,
+  ExitMsg,
+  UserMsg,
+  AbortMsg,
+  SchedulerMsg,
 } from "./types";
 
-export type { SamplingDtype, SamplingParamsOpts } from "./types";
+export type { SamplingDtype, SamplingParamsOpts, ForwardInput } from "./types";
 
 export { SgSimContext, Simulator } from "./Simulator";
 
@@ -28,6 +32,8 @@ export {
   Req,
   Batch,
   ForwardOutput,
+  MockEvent,
+  BatchSamplingArgs,
 } from "./core";
 
 export type { ReqOpts } from "./core";
@@ -40,12 +46,14 @@ export {
 
 export type { PendingReqOpts } from "./entities";
 
-// S2: scheduler 组件
+// S2+S3: scheduler 组件
 export {
   PrefillAdder,
   PrefillManager,
   DecodeManager,
   SimSchedulerImpl,
+  SchedulerIOMixin,
+  SimScheduler,
 } from "./scheduler";
 
 // K1: cache 抽象层 + K5 内存预算 + K2 实现 + K3 CacheManager
@@ -153,7 +161,9 @@ export {
   GraphRunner,
   Sampler,
 } from "./engine";
-// P3a: MockEngine（含 MoE 集成）
+// P3a+S3: MockEngine（含 MoE 集成） + MockSampler/MockAttnBackend
 export {
   MockEngine,
+  MockSampler,
+  MockAttnBackend,
 } from "./engine";
