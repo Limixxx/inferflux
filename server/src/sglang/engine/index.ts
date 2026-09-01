@@ -1,51 +1,30 @@
-// engine — S1: MockEngine/GraphRunner/Sampler + P6: ParallelGroups 集成
-
-import type { SimulatorConfig, ModelConfig } from "../types";
-import type { ForwardOutput } from "../core";
-import { Batch, Req, SamplingParams } from "../core";
-import { ParallelTopology, ParallelMetrics } from "../parallel";
-import type { ParallelGroups } from "../parallel/groups";
-import { initParallelGroups } from "../parallel/groups";
-import { calculateMemoryBudgetParallel } from "../parallel/budget";
-// engine — S1: MockEngine/GraphRunner/Sampler + P4: PP + P5: CP + P3a: MoE + S3: MockSampler/MockAttnBackend
+// engine — S1: MockEngine/GraphRunner/Sampler + P4: PP + P5: CP + P3a: MoE
+//        + S3: MockSampler/MockAttnBackend + P6: ParallelGroups 集成
 
 import type { SimulatorConfig, ModelConfig } from "../types";
 import { Req, Batch, SamplingParams, BatchSamplingArgs, MockEvent } from "../core";
 import type { ForwardOutput } from "../core";
 import { ChunkedReq } from "../entities";
-import { PPPipelineSimulator } from "../parallel/pp";
 import type { PipelineStepResult } from "../parallel/pp";
-import { CPSimulator } from "../parallel/cp_simulator";
-import { ParallelTopology, SimCommGroup as SimCommGroupImpl, ParallelMetrics } from "../parallel";
-import { SimMoeBackend } from "../parallel/moe";
+import { ParallelTopology, ParallelMetrics } from "../parallel";
+import type { ParallelGroups } from "../parallel/groups";
+import { initParallelGroups } from "../parallel/groups";
+import { calculateMemoryBudgetParallel } from "../parallel/budget";
 import { SimulationMetrics } from "../metrics";
 
 // ===== GraphRunner =====
 
-/** CUDA Graph 运行器（§3.3.1 / §9.11 SimGraphRunner） */
+/** CUDA Graph 运行器桩 */
 export class GraphRunner {
   private readonly enableCudaGraph: boolean;
   private readonly cudaGraphBs: number[] | null;
   private readonly cudaGraphMaxBs: number | null;
-  readonly dummyReq: Req;
-  private readonly dummyReq: Req | null;
+  readonly dummyReq: Req | null;
 
   constructor(config: SimulatorConfig, dummyReq?: Req) {
     this.enableCudaGraph = config.enableCudaGraph;
     this.cudaGraphBs = config.cudaGraphBs;
     this.cudaGraphMaxBs = config.cudaGraphMaxBs;
-    // dummyReq 用于 CUDA Graph padding（table_idx = max_running_req）
-    if (dummyReq) {
-      this.dummyReq = dummyReq;
-    } else {
-      this.dummyReq = new Req({
-        rid: -1,
-        inputIds: [0],
-        samplingParams: new SamplingParams(),
-      });
-      this.dummyReq.deviceLen = 1;
-      this.dummyReq.maxDeviceLen = 1;
-    }
     this.dummyReq = dummyReq ?? null;
   }
 
@@ -54,7 +33,6 @@ export class GraphRunner {
     if (!this.enableCudaGraph) return false;
     const bs = batch.reqs.size;
     if (this.cudaGraphBs !== null) {
-      // 找到 >= bs 的最小 graph 尺寸（§9.11 使用 some 而非 includes）
       return this.cudaGraphBs.some(cbs => cbs >= bs);
     }
     if (this.cudaGraphMaxBs !== null) {
@@ -83,16 +61,6 @@ export class GraphRunner {
       ...reqsArray,
       ...Array(dummyCount).fill(this.dummyReq),
     ];
-  }
-
-  /** 将 batch padding 到 CUDA graph 尺寸（§9.11 pad_batch） */
-  padBatch(batch: Batch): void {
-    if (this.cudaGraphBs !== null && this.enableCudaGraph) {
-      const bs = batch.reqs.size;
-      const paddedSize = this.cudaGraphBs.find(cbs => cbs >= bs) ?? bs;
-      // 在 batch 上记录 padding 信息（不影响 batch.reqs 本身）
-      (batch as unknown as { paddedSize: number }).paddedSize = paddedSize;
-    }
   }
 }
 
@@ -253,7 +221,24 @@ export class MockAttnBackend {
 // ===== MockEngine =====
 
 /**
- * MockEngine — 仿真引擎（S1 + P6 ParallelGroups 集成）
+ * MockEngine — 仿真引擎（S1 + P4 PP + P5 CP + P3a MoE + S3 + P6 ParallelGroups 集成）
+ *
+ * P4 集成点：
+ * - forwardBatchPP 前先切 micro_batch；按 schedule 循环；
+ *   last 走采样；中间 stage 返回 intermediate
+ * - CUDA Graph replay 路径跳过 PP 通信仿真（§10.5.3 行4480-4482）
+ *
+ * P5 集成点：
+ * - forwardBatchSeq 逐层执行 attention + MLP，
+ *   每层 attention 结束后若 cp_size > 1 则注入 KV all-gather 通信成本。
+ *
+ * P3a 集成点：
+ * - 当 modelConfig.isMoe=true 时通过 groups.moeBackend
+ *   对 MoE 层条件调用 moeBackend.forward。
+ *
+ * S3 集成点：
+ * - 新增 forward_batch（snake_case）方法对齐 §9.11 L3676-3694
+ * - 新增 mockSampler/mockAttnBackend/dummyReq 等属性
  *
  * P6 集成点：
  * - 构造器接收 optional ParallelGroups；未提供时内部调用 initParallelGroups 创建
@@ -262,24 +247,6 @@ export class MockAttnBackend {
  *   每层：Attention + CP KV all-gather → TP all-reduce after attn → MLP/MoE → TP all-reduce after MLP（非 MoE）→ DP-Attn all-gather
  *   层循环后：CPU barrier → PP 通信仿真 → TP 通信指标汇总 → 采样
  * - EPLB maybe_rebalance 不在 forwardBatch 内调用（移至 scheduler tick 末尾）
- * MockEngine — 仿真引擎（S1 + P4 PP + P5 CP + P3a MoE + S3 集成）
- *
- * P4 集成点：
- * - forwardBatch 前先切 micro_batch；按 schedule 循环；
- *   last 走采样；中间 stage 返回 intermediate
- * - CUDA Graph replay 路径跳过 PP 通信仿真（§10.5.3 行4480-4482）
- *
- * P5 集成点：
- * - forwardBatch 逐层执行 attention + MLP，
- *   每层 attention 结束后若 cp_size > 1 则注入 KV all-gather 通信成本。
- *
- * P3a 集成点：
- * - 当 modelConfig.isMoe=true 时创建 SimMoeBackend 实例，
- *   对 MoE 层条件调用 moeBackend.forward。
- *
- * S3 集成点：
- * - 新增 forward_batch（snake_case）方法对齐 §9.11 L3676-3694
- * - 新增 mockSampler/mockAttnBackend/dummyReq 等属性
  */
 export class MockEngine {
   readonly config: SimulatorConfig;
@@ -288,19 +255,13 @@ export class MockEngine {
   readonly parallelMetrics: ParallelMetrics;
   readonly graphRunner: GraphRunner;
   readonly sampler: Sampler;
-  readonly groups: ParallelGroups;
-  readonly isPpLast: boolean;
   readonly ppRank: number;
+  readonly isPpLast: boolean;
+  readonly groups: ParallelGroups;
 
   /** MoE 层索引列表（在 isMoe=true 时由外部设定，默认全部 MoE 层） */
   moeLayers: number[];
 
-  constructor(
-    config: SimulatorConfig,
-    modelConfig?: ModelConfig,
-    ppRank: number = 0,
-    parallelGroups?: ParallelGroups,
-  ) {
   // S3 新增属性
   readonly mockSampler: MockSampler;
   readonly mockAttnBackend: MockAttnBackend;
@@ -309,28 +270,17 @@ export class MockEngine {
   readonly numPages: number;
   readonly maxSeqLen: number;
 
-  constructor(config: SimulatorConfig, modelConfig?: ModelConfig, ppRank: number = 0) {
+  constructor(
+    config: SimulatorConfig,
+    modelConfig?: ModelConfig,
+    ppRank: number = 0,
+    parallelGroups?: ParallelGroups,
+  ) {
     this.config = config;
     this.modelConfig = modelConfig ?? config.modelConfig;
     this.simMetrics = new SimulationMetrics();
     this.parallelMetrics = new ParallelMetrics();
 
-    this.ppRank = ppRank;
-    this.isPpLast = (ppRank === config.ppSize - 1);
-    this.graphRunner = new GraphRunner(config);
-    this.sampler = new Sampler(config);
-
-    // P6: 使用传入的 parallelGroups 或内部创建
-    if (parallelGroups) {
-      this.groups = parallelGroups;
-    } else {
-      const budget = calculateMemoryBudgetParallel(
-        config,
-        this.modelConfig,
-        config.totalGpuMemory,
-      );
-      this.groups = initParallelGroups({
-        config,
     // S3: 初始化 pageTable 和缓存相关
     this.maxSeqLen = config.maxSeqLen;
     this.numPages = config.numPages ?? 1024;
@@ -354,12 +304,11 @@ export class MockEngine {
 
     // S3: 创建 GraphRunner（注入 dummyReq）
     this.graphRunner = new GraphRunner(config, this.dummyReq);
+    this.sampler = new Sampler(config);
 
-    // P4: PP 集成
+    // PP
     this.ppRank = ppRank;
     this.isPpLast = (ppRank === config.ppSize - 1);
-    this.ppSim = new PPPipelineSimulator(config, this.modelConfig);
-    this.sampler = new Sampler(config);
 
     // S3: 创建 MockSampler 和 MockAttnBackend
     this.mockSampler = new MockSampler(
@@ -369,37 +318,17 @@ export class MockEngine {
     );
     this.mockAttnBackend = new MockAttnBackend();
 
-    // P5: CP 集成
-    this.cpSim = config.cpSize > 1
-      ? new CPSimulator(config, this.modelConfig)
-      : null;
-
-    // P3a: 创建并行拓扑
-    this.topology = new ParallelTopology({
-      tpSize: config.tpSize,
-      dpSize: config.dpSize,
-      epSize: config.epSize,
-      ppSize: config.ppSize,
-      cpSize: config.cpSize,
-      enableDpAttention: config.enableDpAttention,
-    });
-
-    // P3a: MoE 层索引
-    this.moeLayers = this.modelConfig.isMoe
-      ? Array.from({ length: this.modelConfig.numLayers }, (_, i) => i)
-      : [];
-
-    // P3a: 条件创建 SimMoeBackend
-    if (this.modelConfig.isMoe) {
-      const epCommGroup = new SimCommGroupImpl({
-        groupType: "ep",
-        size: config.epSize,
-        networkBandwidthGBps: config.networkBandwidthGBps,
-        latencyUs: config.networkLatencyUs,
-        efficiency: config.epEfficiency,
-      });
-
-      this.moeBackend = new SimMoeBackend({
+    // P6: ParallelGroups 集成
+    if (parallelGroups) {
+      this.groups = parallelGroups;
+    } else {
+      const budget = calculateMemoryBudgetParallel(
+        config,
+        this.modelConfig,
+        config.totalGpuMemory,
+      );
+      this.groups = initParallelGroups({
+        config,
         modelConfig: this.modelConfig,
         numPages: budget.numPages,
         metrics: this.parallelMetrics,
@@ -437,9 +366,6 @@ export class MockEngine {
     return this.groups.moeBackend ?? undefined;
   }
 
-  /** Mock 模型前向（桩实现，返回 logits 数组） */
-  private _mockModelForward(batch: Batch): number[] {
-    return new Array(batch.reqs.size * 128).fill(0);
   /** Mock 模型前向（桩实现，返回 2D logits 数组） */
   private _mockModelForward(batch: Batch): number[][] {
     const bs = batch.paddedReqs.length || batch.reqs.size;
@@ -510,15 +436,15 @@ export class MockEngine {
   }
 
   /**
-   * 便捷方法：仅传入 batch，自动提取第一个 req 的 tokenIds/seqLen
-   * 用于 PP 等已有 batch 对象的场景（旧测试兼容）
+   * P4: 执行一个 batch 的 forward（PP 版本）
+   *
+   * 行为合约（§10.5.3）：
+   * - isIntermediate=true（中间 PP stage）：
+   *   sampler 不调用，samplingCounter 不增加，sampledIds=null
+   * - isIntermediate=false（最后 PP stage 或 pp_size=1）：
+   *   sampler 调用，samplingCounter 增加，sampledIds 非空
+   * - CUDA Graph replay 路径跳过 PP 通信仿真
    */
-  forwardBatchReq(batch: Batch, localBatchSizes?: number[]): ForwardOutput {
-    const firstReq = batch.reqs.values().next().value;
-    const tokenIds = firstReq ? firstReq.inputIds : [];
-    const seqLen = tokenIds.length;
-    return this.forwardBatch(tokenIds, seqLen, batch, localBatchSizes);
-  }
   forwardBatchPP(batch: Batch): { logits: number[]; sampledIds: number[] | null; isIntermediate: boolean } {
     let ppStepResult: PipelineStepResult | null = null;
     let logits: number[];
@@ -539,6 +465,51 @@ export class MockEngine {
     if (!this.isPpLast) {
       return { logits, sampledIds: null, isIntermediate: true };
     }
+
+    const nextTokenIds = this.sampler.sample(logits, batch.reqs.size);
+    return { logits, sampledIds: nextTokenIds, isIntermediate: false };
+  }
+
+  /**
+   * P5: 仿真一次 forward batch（逐层 CP 版本）
+   *
+   * @param seqLen 序列长度
+   * @param numLayers 覆盖模型层数（默认取 modelConfig.numLayers）
+   * @returns 更新后的 metrics
+   */
+  forwardBatchSeq(seqLen: number, numLayers?: number): SimulationMetrics {
+    const layers = numLayers ?? this.modelConfig.numLayers;
+
+    for (let layerIdx = 0; layerIdx < layers; layerIdx++) {
+      // 1. Attention 计算（已由其他 Issue 实现，此处仅模拟）
+
+      // 2. CP KV all-gather（仅 attn 层后）
+      if (this.cpSim) {
+        const cpResult = this.cpSim.simulateAttnForward(seqLen);
+        this.simMetrics.parallel.cpCommTicks += cpResult.commTicks;
+        this.simMetrics.parallel.cpAllGatherCount += 1;
+        this.simMetrics.parallel.cpSeqLenPerRank = cpResult.seqLenPerRank;
+      }
+
+      // 3. MLP 计算（不触发 CP 通信）
+    }
+
+    this.simMetrics.parallel.cpSize = this.config.cpSize;
+    this.simMetrics.parallel.tpSize = this.config.tpSize;
+
+    return this.simMetrics;
+  }
+
+  /**
+   * 便捷方法：仅传入 batch，自动提取第一个 req 的 tokenIds/seqLen
+   * 用于 PP 等已有 batch 对象的场景（旧测试兼容）
+   */
+  forwardBatchReq(batch: Batch, localBatchSizes?: number[]): ForwardOutput {
+    const firstReq = batch.reqs.values().next().value;
+    const tokenIds = firstReq ? firstReq.inputIds : [];
+    const seqLen = tokenIds.length;
+    return this.forwardBatch(tokenIds, seqLen, batch, localBatchSizes);
+  }
 
   /**
    * 便捷方法：用 seqLen 自动构造最小 batch 后调用 forwardBatch
@@ -637,9 +608,27 @@ export class MockEngine {
     // 步骤 8: 采样（仅最后 PP stage）
     const logits = this._mockModelForward(batch);
     if (!this.isPpLast) {
-      return { logits, sampledIds: null, isIntermediate: true };
+      const copyDoneEvent = new MockEvent();
+      copyDoneEvent.record();
+      return {
+        logits,
+        nextTokensGpu: null,
+        nextTokensCpu: null,
+        copyDoneEvent,
+        isIntermediate: true,
+        sampledIds: null,
+      };
     }
-    const nextTokenIds = this.sampler.sample(logits, batch.reqs.size);
-    return { logits, sampledIds: nextTokenIds, isIntermediate: false };
+    const nextTokenIds = this.sampler.sample(logits.flat(), batch.reqs.size);
+    const copyDoneEvent = new MockEvent();
+    copyDoneEvent.record();
+    return {
+      logits,
+      nextTokensGpu: nextTokenIds,
+      nextTokensCpu: [...nextTokenIds],
+      copyDoneEvent,
+      isIntermediate: false,
+      sampledIds: nextTokenIds,
+    };
   }
 }

@@ -1,15 +1,14 @@
 // scheduler — K1: TableManager + S2: PrefillAdder/PrefillManager/DecodeManager
-// P6: SimScheduler 实现（ParallelGroups 接入 + EPLB 集成 + globalStep + §9.11 完整调度循环）
-// scheduler — K1: TableManager + S2: PrefillAdder/PrefillManager/DecodeManager + S3: SchedulerIOMixin/SimScheduler
+// P6: SimSchedulerImpl（ParallelGroups 接入 + EPLB 集成 + globalStep）
+// S3: SchedulerIOMixin + SimScheduler（§9.11 完整调度循环）
 
 import { Req, Batch, SamplingParams, BatchSamplingArgs } from "../core";
+import type { ForwardOutput } from "../core";
 import { ChunkedReq, PendingReq } from "../entities";
 import { CacheManager } from "../cache";
 import type { BaseCacheHandle } from "../cache";
-import type { SimRequestMsg, SimRespMsg } from "../types";
 import type { ParallelGroups } from "../parallel/groups";
 import type { SimulationMetrics } from "../metrics";
-import type { ForwardOutput } from "../core";
 import { MockEngine } from "../engine";
 import type {
   SimulatorConfig,
@@ -464,14 +463,14 @@ export class PrefillManager {
 
 // ===== P6: SimScheduler 实现 =====
 
-/** Forward 调度结果，传递给 _forward */
-interface ForwardInput {
+/** P6 调度结果，传递给 SimSchedulerImpl._forward */
+interface P6ScheduleInput {
   batch: Batch;
   isPrefill: boolean;
 }
 
-/** Forward 返回数据，用于 _processLastData */
-interface ForwardData {
+/** P6 Forward 返回数据，用于 SimSchedulerImpl._processLastData */
+interface P6ForwardData {
   batch: Batch;
   isPrefill: boolean;
   output: ForwardOutput;
@@ -504,7 +503,7 @@ export class SimSchedulerImpl {
   private readonly _cacheManager: CacheManager | null;
   private readonly _tableManager: TableManager | null;
   private _globalStep: number = 0;
-  private _lastData: ForwardData | null = null;
+  private _lastData: P6ForwardData | null = null;
   private _finishedReqs: Set<Req> = new Set();
 
   constructor(
@@ -612,7 +611,7 @@ export class SimSchedulerImpl {
     // 步骤 4：处理 forward 结果
     const replies: SimRespMsg[] = [];
     if (forwardOutput !== null && forwardInput !== null) {
-      const data: ForwardData = { batch: forwardInput.batch, isPrefill: forwardInput.isPrefill, output: forwardOutput };
+      const data: P6ForwardData = { batch: forwardInput.batch, isPrefill: forwardInput.isPrefill, output: forwardOutput };
       replies.push(...this._processLastData(data));
     }
 
@@ -680,7 +679,7 @@ export class SimSchedulerImpl {
    * 调度下一个 batch（§9.11 _schedule_next_batch）
    * 优先调度 prefill，无 prefill 则调度 decode
    */
-  private _scheduleNextBatch(): ForwardInput | null {
+  private _scheduleNextBatch(): P6ScheduleInput | null {
     const prefillBudget = this._config.maxExtendTokens;
 
     // 优先 prefill
@@ -714,8 +713,7 @@ export class SimSchedulerImpl {
    * 3. 对每个 req 调用 completeOne（ChunkedReq 除外）
    * 4. DecodeManager.filterReqs 更新可 decode 集合
    */
-  private _forward(input: ForwardInput): ForwardOutput | null {
-    if (!this._engine) return null;
+  private _forward(input: P6ScheduleInput): ForwardOutput | null {
 
     const batch = input.batch;
     // 提取 tokenIds（取第一个 req 的 inputIds）
@@ -724,6 +722,7 @@ export class SimSchedulerImpl {
     const seqLen = tokenIds.length;
 
     // 调用 engine.forwardBatch
+    if (!this._engine) return null;
     const output = this._engine.forwardBatch(tokenIds, seqLen, batch);
 
     // 对每个 req 调用 completeOne（ChunkedReq 除外）
@@ -751,17 +750,17 @@ export class SimSchedulerImpl {
    *    e. prefill 非 finished → CacheManager.cacheReq(finished=false)
    * 2. 返回 DetokenizeMsg 列表
    */
-  private _processLastData(data: ForwardData): SimRespMsg[] {
+  private _processLastData(data: P6ForwardData): SimRespMsg[] {
     const replies: SimRespMsg[] = [];
     const batch = data.batch;
     const output = data.output;
 
-    if (output.sampledIds === null) {
+    if (!output.sampledIds) {
       // 中间 PP stage，无采样结果
       return replies;
     }
 
-    const nextTokens = output.sampledIds;
+    const nextTokens: number[] = output.sampledIds;
     const newFinishedReqs: Set<Req> = new Set();
 
     // 进入 lazy_free_region（如果 cacheManager 可用）
@@ -854,6 +853,9 @@ export class SimSchedulerImpl {
         this._simMetrics.parallel.epRebalanceCostTicks += result.rebalanceTicks;
       }
     }
+  }
+}
+
 // ===== S3: SchedulerIOMixin（§9.6 L2193-2241） =====
 
 /**

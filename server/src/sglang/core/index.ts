@@ -55,7 +55,6 @@ export interface SamplingParamsOpts {
   skipSpecialTokens?: boolean;
   ignoreEos?: boolean;
   dtype?: SamplingDtype;
-  ignoreEos?: boolean;
 }
 
 /**
@@ -74,7 +73,6 @@ export class SamplingParams {
   readonly skipSpecialTokens: boolean;
   readonly ignoreEos: boolean;
   readonly dtype: SamplingDtype;
-  readonly ignoreEos: boolean;
 
   constructor(opts?: SamplingParamsOpts) {
     this.maxNewTokens = opts?.maxNewTokens ?? 1024;
@@ -88,7 +86,6 @@ export class SamplingParams {
     this.skipSpecialTokens = opts?.skipSpecialTokens ?? true;
     this.ignoreEos = opts?.ignoreEos ?? false;
     this.dtype = opts?.dtype ?? "float16";
-    this.ignoreEos = opts?.ignoreEos ?? false;
   }
 
   /** 是否为贪婪采样：temperature≤0 或 topK=1 且 topP=1.0 */
