@@ -1,10 +1,13 @@
 // scheduler — K1: TableManager + S2: PrefillAdder/PrefillManager/DecodeManager
+// P6: SimScheduler 实现（ParallelGroups 接入 + EPLB 集成 + globalStep）
 
 import { Req, Batch, SamplingParams } from "../core";
 import { ChunkedReq, PendingReq } from "../entities";
 import type { CacheManager } from "../cache";
 import type { BaseCacheHandle } from "../cache";
-import type { SimRequestMsg } from "../types";
+import type { SimRequestMsg, SimRespMsg } from "../types";
+import type { ParallelGroups } from "../parallel/groups";
+import type { SimulationMetrics } from "../metrics";
 
 /** 管理 page_table 行分配（§3.3.6 / §9.11 完整实现） */
 export class TableManager {
@@ -443,5 +446,161 @@ export class PrefillManager {
     }
     batch.extendInputTokens = adder.consumedTokens;
     return batch;
+  }
+}
+
+// ===== P6: SimScheduler 实现 =====
+
+/**
+ * SimScheduler — 仿真调度器（P6 ParallelGroups 集成）
+ *
+ * 在 S1 的调度逻辑基础上，接入 ParallelGroups：
+ * - 构造器接收 optional ParallelGroups
+ * - add_request 路径中集成 dpController.select_rank_for_request
+ * - tick 末尾调用 EPLB maybe_rebalance（§10.4.4）
+ * - 维护 _globalStep 供 EPLB 使用
+ */
+export class SimSchedulerImpl {
+  private readonly _config: import("../types").SimulatorConfig;
+  private readonly _prefillManager: PrefillManager;
+  private readonly _decodeManager: DecodeManager;
+  private readonly _groups: ParallelGroups | null;
+  private readonly _simMetrics: SimulationMetrics | null;
+  private _globalStep: number = 0;
+
+  constructor(
+    config: import("../types").SimulatorConfig,
+    prefillManager: PrefillManager,
+    decodeManager: DecodeManager,
+    parallelGroups?: ParallelGroups,
+    simMetrics?: SimulationMetrics,
+  ) {
+    this._config = config;
+    this._prefillManager = prefillManager;
+    this._decodeManager = decodeManager;
+    this._groups = parallelGroups ?? null;
+    this._simMetrics = simMetrics ?? null;
+  }
+
+  /** 当前全局步数 */
+  get globalStep(): number {
+    return this._globalStep;
+  }
+
+  /** 获取 ParallelGroups（只读） */
+  get groups(): ParallelGroups | null {
+    return this._groups;
+  }
+
+  /**
+   * 添加请求到调度器
+   *
+   * P6 扩展：若 dpSize > 1，先通过 dpController.select_rank_for_request 分配 DP rank
+   */
+  addRequest(msg: SimRequestMsg): void {
+    // DP 请求分发
+    if (this._groups && this._config.dpSize > 1) {
+      const neededPages = 1; // 简化：每个请求至少需要 1 页
+      const rank = this._groups.dpController.select_rank_for_request(neededPages);
+      if (rank === null) {
+        // OOM：拒绝请求
+        return;
+      }
+      const dpRank = rank.rank;
+      const sp = msg.samplingParams ?? new SamplingParams({ maxNewTokens: msg.outputLen });
+      const pr = new PendingReq({
+        rid: msg.uid,
+        inputIds: msg.inputIds,
+        samplingParams: sp,
+        dpRank,
+      });
+      this._prefillManager.pendingList.push(pr);
+      return;
+    }
+    this._prefillManager.addOneReq(msg);
+  }
+
+  /**
+   * 执行一个调度 tick
+   * @param incoming 进入的请求消息列表
+   * @returns 响应消息列表
+   */
+  runTick(incoming: SimRequestMsg[]): SimRespMsg[] {
+    if (this._config.enableOverlap) {
+      return this._overlap_tick(incoming);
+    }
+    return this._normal_tick(incoming);
+  }
+
+  /**
+   * Normal（非 overlap）tick
+   *
+   * 步骤：
+   * 1. 处理 incoming 消息 → add_request
+   * 2. 调度 prefill/decode batch
+   * 3. forward + 结果处理
+   * 4. EPLB maybe_rebalance（tick 末尾）
+   * 5. 递增 globalStep
+   */
+  private _normal_tick(incoming: SimRequestMsg[]): SimRespMsg[] {
+    // 步骤 1：处理入队消息
+    for (const msg of incoming) {
+      this.addRequest(msg);
+    }
+
+    // 步骤 2 & 3：调度 + forward + 结果处理（桩实现，后续 S1 Issue 完善）
+    const replies: SimRespMsg[] = [];
+
+    // 步骤 4：EPLB maybe_rebalance（§10.4.4）
+    this._maybeEplbRebalance();
+
+    // 步骤 5：递增 globalStep
+    this._globalStep += 1;
+
+    return replies;
+  }
+
+  /**
+   * Overlap tick
+   *
+   * 与 _normal_tick 类似，但支持 overlap scheduling。
+   * 步骤末尾同样调用 EPLB + 递增 globalStep。
+   */
+  private _overlap_tick(incoming: SimRequestMsg[]): SimRespMsg[] {
+    // 步骤 1：处理入队消息
+    for (const msg of incoming) {
+      this.addRequest(msg);
+    }
+
+    // 步骤 2 & 3：overlap 调度 + forward + 结果处理（桩实现，后续 S1 Issue 完善）
+    const replies: SimRespMsg[] = [];
+
+    // 步骤 4：EPLB maybe_rebalance（§10.4.4）
+    this._maybeEplbRebalance();
+
+    // 步骤 5：递增 globalStep
+    this._globalStep += 1;
+
+    return replies;
+  }
+
+  /**
+   * EPLB maybe_rebalance 调用
+   *
+   * 在 tick 末尾调用（§10.4.4），条件：
+   * - groups.eplbSim 非 null
+   * - groups.moeBackend 非 null
+   */
+  private _maybeEplbRebalance(): void {
+    if (this._groups?.eplbSim && this._groups.moeBackend) {
+      const result = this._groups.eplbSim.maybe_rebalance(
+        this._globalStep,
+        this._groups.moeBackend.expertLoadCounts,
+        this._groups.moeBackend,
+      );
+      if (result.shouldRebalance && this._simMetrics) {
+        this._simMetrics.parallel.epRebalanceCostTicks += result.rebalanceTicks;
+      }
+    }
   }
 }

@@ -74,3 +74,12 @@ export {
   ValidationResult,
   validateParallelConfig,
 } from "./validate";
+// P6: ParallelGroups + initParallelGroups
+export type {
+  ParallelGroups,
+  InitParallelGroupsOpts,
+} from "./groups";
+
+export {
+  initParallelGroups,
+} from "./groups";

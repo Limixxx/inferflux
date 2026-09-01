@@ -295,26 +295,22 @@ test("T16 Constraint 2: EP>1 but not MoE", () => {
 
 // T17: 约束 3：cp_size 不整除 tp_size
 test("T17 Constraint 3: cp_size does not divide tp_size", () => {
-  // ParallelTopology 构造函数会直接 throw，validate 应该能捕获
-  assert.throws(
-    () => {
-      const config = makeConfig({ tpSize: 8, cpSize: 3 });
-      validateParallelConfig(config, DEFAULT_MODEL_CONFIG);
-    },
-    /cp_size.*must divide tp_size/
-  );
+  const config = makeConfig({ tpSize: 8, cpSize: 3 });
+  const result = validateParallelConfig(config, DEFAULT_MODEL_CONFIG);
+
+  assert.strictEqual(result.ok, false);
+  assert.ok(result.errors.some(e => e.includes("Constraint 3")),
+    `Expected Constraint 3 error, got: ${result.errors.join("; ")}`);
 });
 
 // T18: 约束 4：(tp/cp) 不整除 ep_size
 test("T18 Constraint 4: (tp/cp) does not divide ep_size", () => {
-  // ParallelTopology 构造函数会直接 throw
-  assert.throws(
-    () => {
-      const config = makeConfig({ tpSize: 8, cpSize: 2, epSize: 3 });
-      validateParallelConfig(config, DEFAULT_MODEL_CONFIG);
-    },
-    /ep_size.*must divide/
-  );
+  const config = makeConfig({ tpSize: 8, cpSize: 2, epSize: 3 });
+  const result = validateParallelConfig(config, DEFAULT_MODEL_CONFIG);
+
+  assert.strictEqual(result.ok, false);
+  assert.ok(result.errors.some(e => e.includes("Constraint 4")),
+    `Expected Constraint 4 error, got: ${result.errors.join("; ")}`);
 });
 
 // T19: 约束 5：pp_size > numLayers

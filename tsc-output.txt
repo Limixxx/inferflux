@@ -1,0 +1,22 @@
+﻿src/test/sglang-p3a.test.ts(565,24): error TS2554: Expected 3-4 arguments, but got 2.
+src/test/sglang-p3a.test.ts(566,13): error TS2365: Operator '>' cannot be applied to types 'ForwardOutput' and 'number'.
+src/test/sglang-p3a.test.ts(574,24): error TS2554: Expected 3-4 arguments, but got 2.
+src/test/sglang-p5.test.ts(106,10): error TS2554: Expected 3-4 arguments, but got 1.
+src/test/sglang-p5.test.ts(140,10): error TS2554: Expected 3-4 arguments, but got 1.
+src/test/sglang-p5.test.ts(192,10): error TS2554: Expected 3-4 arguments, but got 1.
+src/test/sglang-p5.test.ts(201,10): error TS2554: Expected 3-4 arguments, but got 1.
+src/test/sglang-p5.test.ts(211,10): error TS2554: Expected 3-4 arguments, but got 1.
+src/test/sglang-p5.test.ts(265,10): error TS2554: Expected 3-4 arguments, but got 1.
+src/test/sglang-p5.test.ts(287,12): error TS2554: Expected 3-4 arguments, but got 1.
+src/test/sglang-p5.test.ts(289,11): error TS2554: Expected 3-4 arguments, but got 1.
+src/test/sglang-pp.test.ts(139,25): error TS2554: Expected 3-4 arguments, but got 1.
+src/test/sglang-pp.test.ts(150,25): error TS2554: Expected 3-4 arguments, but got 1.
+src/test/sglang-pp.test.ts(163,10): error TS2554: Expected 3-4 arguments, but got 1.
+src/test/sglang-pp.test.ts(173,10): error TS2554: Expected 3-4 arguments, but got 1.
+src/test/sglang-pp.test.ts(185,10): error TS2554: Expected 3-4 arguments, but got 1.
+src/test/sglang-pp.test.ts(256,10): error TS2554: Expected 3-4 arguments, but got 1.
+src/test/sglang-pp.test.ts(469,10): error TS2554: Expected 3-4 arguments, but got 1.
+src/test/sglang-pp.test.ts(481,25): error TS2554: Expected 3-4 arguments, but got 1.
+src/test/sglang-pp.test.ts(494,10): error TS2554: Expected 3-4 arguments, but got 1.
+src/test/sglang-pp.test.ts(507,17): error TS2554: Expected 3-4 arguments, but got 1.
+src/test/sglang-pp.test.ts(508,19): error TS2554: Expected 3-4 arguments, but got 1.

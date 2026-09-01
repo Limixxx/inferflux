@@ -28,6 +28,7 @@ export interface PendingReqOpts {
   priority?: number;
   nextScheduledTime?: number;
   chunkedReq?: ChunkedReq | null;
+  dpRank?: number;
 }
 
 /**
@@ -41,6 +42,7 @@ export class PendingReq {
   inputIds: number[];
   samplingParams: SamplingParams;
   chunkedReq: ChunkedReq | null;
+  dpRank: number;
 
   constructor(opts: PendingReqOpts) {
     this.rid = opts.rid;
@@ -49,6 +51,7 @@ export class PendingReq {
     this.inputIds = [...opts.inputIds];
     this.samplingParams = opts.samplingParams;
     this.chunkedReq = opts.chunkedReq ?? null;
+    this.dpRank = opts.dpRank ?? 0;
   }
 
   /** 输入 token 长度 */
