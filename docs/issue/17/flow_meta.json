@@ -1,0 +1,19 @@
+{
+  "issue_number": 17,
+  "issue_title": "[SGLang-Sim] S3: MockEngine + SimScheduler normal_tick + SchedulerIOMixin",
+  "labels": [
+    "enhancement",
+    "sglang-simulator",
+    "sglang-scheduler"
+  ],
+  "branch": "issue-17",
+  "base_branch": "main",
+  "worktree_path": ".worktree\\issue-17",
+  "solution_pr_url": "https://github.com/Limixxx/inferflux/pull/76",
+  "solution_pr_number": 76,
+  "code_pr_url": "https://github.com/Limixxx/inferflux/pull/77",
+  "code_pr_number": 77,
+  "project_item_id": "PVTI_lAHOBeeNX84Bg4hjzg4NOOw",
+  "created_at": "2026-08-31T05:41:20Z",
+  "status": "In progress"
+}

@@ -188,6 +188,7 @@ export const DEFAULT_SIMULATOR_CONFIG: SimulatorConfig = {
 
 // 采样参数（S1 升级为 class，S0 的 interface 替换为类型别名）
 import { SamplingParams as SamplingParamsClass, SamplingDtype, SamplingParamsOpts } from "./core";
+import type { Batch, BatchSamplingArgs } from "./core";
 export { SamplingParamsClass as SamplingParams };
 export type { SamplingDtype, SamplingParamsOpts };
 
@@ -223,12 +224,57 @@ export { TableManager };
 // K3: CacheManager class 引用
 export { CacheManager } from "./cache";
 
-// ===== 占位接口（后续 Issue 实现） =====
+// ===== S3: 调度器消息类型（对齐 §9.11 L3027-3052） =====
 
-/** 调度器桩（S1 实现） */
-export interface SimScheduler {
-  runTick(incoming: SimRequestMsg[]): SimRespMsg[];
+/** 批量消息容器 */
+export interface BatchSchedulerMsg {
+  tag: "batch";
+  data: SchedulerMsg[];
 }
+
+/** 退出信号 */
+export interface ExitMsg {
+  tag: "exit";
+}
+
+/** 用户请求消息（映射到 SimRequestMsg tag=req_in） */
+export interface UserMsg {
+  tag: "req_in";
+  uid: number;
+  inputIds: number[];
+  samplingParams: SamplingParamsClass | null;
+  outputLen: number;
+}
+
+/** 中止请求消息 */
+export interface AbortMsg {
+  tag: "abort";
+  uid: number;
+}
+
+/** 调度器消息联合类型（对齐 §9.11 四种消息） */
+export type SchedulerMsg =
+  | BatchSchedulerMsg
+  | ExitMsg
+  | UserMsg
+  | AbortMsg;
+
+// ===== S3: ForwardInput 接口（对齐 §9.11 L2984-3010） =====
+
+/** Forward 输入元数据 */
+export interface ForwardInput {
+  batch: Batch;
+  sampleArgs: BatchSamplingArgs;
+  inputTuple: [number[], number[]];  // [tableIdx[], position[]]
+  writeTuple: [number[], number[]];  // [tableIdx[], position[]]
+}
+
+// ===== 占位接口 → S3 class 引用 =====
+
+// S3: SimScheduler 已在 scheduler/index.ts 中实现为 class
+// 使用 type alias 指向 class，保持已有引用兼容
+import type { SimScheduler as SimSchedulerClass } from "./scheduler";
+export type SimScheduler = SimSchedulerClass;
 
 /** 通信组类型标识（P0 新增） */
 export type CommGroupType = "tp" | "ep" | "pp" | "cp" | "dp_attn";
