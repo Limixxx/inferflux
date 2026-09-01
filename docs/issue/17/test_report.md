@@ -1,77 +1,92 @@
-# Issue #17 — S3 Test Report
+---
+issue_number: 17
+issue_type: Feature
+test_date: 2026-09-01
+test_result: pass
+---
 
-## 测试环境
+# Issue #17 测试报告
 
-- **日期**: 2026-08-31
-- **Node**: v20+ (Windows PowerShell)
-- **TypeScript**: 5.9.3 (strict mode)
-- **运行方式**: `npx ts-node src/test/sglang-s3.test.ts`
+## 验收测试结果
 
-## S3 验收测试结果: 51/51 PASSED
+| 用例编号 | 测试描述 | 结果 |
+|----------|---------|------|
+| T1 | MockEvent 构造与 synchronize | ✅ pass |
+| T2 | MockSampler 构造 | ✅ pass |
+| T3 | MockSampler.prepare - greedy batch | ✅ pass |
+| T4 | MockSampler.prepare - mixed batch | ✅ pass |
+| T5 | MockSampler.sample - greedy 模式 | ✅ pass |
+| T6 | MockSampler.sample - random 模式 | ✅ pass |
+| T7 | MockSampler.sample - fixed 模式 | ✅ pass |
+| T8 | MockSampler.apply_temperature | ✅ pass |
+| T9 | MockSampler.apply_top_p_top_k | ✅ pass |
+| T10 | MockSampler.apply_logits_penalty | ✅ pass |
+| T11 | MockAttnBackend.prepare_metadata | ✅ pass |
+| T12 | MockAttnBackend.simulate_kv_recycle | ✅ pass |
+| T13 | MockEngine.forward_batch - prefill batch | ✅ pass |
+| T14 | MockEngine.forward_batch - decode batch | ✅ pass |
+| T15 | MockEngine.forward_batch - ChunkedReq 跳过 completeOne | ✅ pass |
+| T16 | MockEngine.forward_batch - CUDA Graph isGraphCapture | ✅ pass |
+| T17 | MockEngine.forward_batch - copyDoneEvent | ✅ pass |
+| T18 | MockEngine.forward_batch - isChunkPrefill | ✅ pass |
+| T19 | SchedulerIOMixin - offline 模式 | ✅ pass |
+| T20 | SchedulerIOMixin - online 模式 | ✅ pass |
+| T21 | SimScheduler 构造 | ✅ pass |
+| T22 | SimScheduler._normalTick - 空 tick | ✅ pass |
+| T23 | SimScheduler end-to-end - 短 prompt | ✅ pass |
+| T24 | SimScheduler._processOneMsg - req_in | ✅ pass |
+| T25 | SimScheduler._processOneMsg - maxTokens 调整 | ✅ pass |
+| T26 | SimScheduler._processOneMsg - ExitMsg | ✅ pass |
+| T27 | SimScheduler._processOneMsg - BatchMsg | ✅ pass |
+| T28 | SimScheduler._processOneMsg - AbortMsg | ✅ pass |
+| T29 | SimScheduler._scheduleNextBatch - prefill 优先 | ✅ pass |
+| T30 | SimScheduler._scheduleNextBatch - 仅 decode | ✅ pass |
+| T31 | SimScheduler._processLastData - copyDoneEvent | ✅ pass |
+| T32 | SimScheduler._processLastData - prefill 完成 | ✅ pass |
+| T33 | SimScheduler._processLastData - 请求完成 | ✅ pass |
+| T34 | SimScheduler._processLastData - EOS 终止 | ✅ pass |
+| T35 | SimScheduler._processLastData - ChunkedReq 跳过 | ✅ pass |
+| T36 | SimScheduler._processLastData - finishedReqs 更新 | ✅ pass |
+| T37 | SimScheduler end-to-end - 完整流程 | ✅ pass |
+| T38 | SimScheduler._freeReqResources | ✅ pass |
+| T39 | GraphRunner.padBatch - 使用 dummyReq | ✅ pass |
+| T40 | MockEngine dummyReq 初始化 | ✅ pass |
+| B1 | 空 incoming + 空 pending + 空 decode | ✅ pass |
+| B2 | maxNewTokens 被截断为 0 | ✅ pass |
+| B3 | 单 token 输入请求 | ✅ pass |
+| B4 | ChunkedReq 在 _processLastData 中 | ✅ pass |
+| B5 | decode batch 空 | ✅ pass |
+| B6 | prefill batch 含混合 ChunkedReq 和 Req | ✅ pass |
+| B7 | greedy 采样 + temperature=0 | ✅ pass |
+| B8 | offline 模式 + 正常 runTick 调用 | ✅ pass |
+| B9 | ExitMsg 在 BatchMsg 内 | ✅ pass |
+| B10 | AbortMsg 目标请求不存在 | ✅ pass |
+| B11 | copyDoneEvent.synchronize 多次调用 | ✅ pass |
+| B12 | ignoreEos=true 时输出 eos token 不终止 | ✅ pass |
 
-| 类别 | 用例数 | 通过 | 失败 |
-|------|--------|------|------|
-| T1-T18: MockEngine/MockSampler/MockAttnBackend/MockEvent | 18 | 18 | 0 |
-| T19-T20: SchedulerIOMixin | 2 | 2 | 0 |
-| T21-T40: SimScheduler | 20 | 20 | 0 |
-| B1-B11: 边界条件 | 11 | 11 | 0 |
-| **合计** | **51** | **51** | **0** |
+## 类型检查
+- 结果: pass
+- `npx tsc --noEmit` 对 S3 相关模块（core、engine、scheduler、types、cache、entities、sglang-s3.test）零错误
+- TS strict zero-any 合规
+- 注：`src/test/sglang-p1a/p2a/p5/pp` 存在 TS1361 类型错误（type export 被当作值使用），属于 Issue #17 之前的历史遗留问题，不在本次 S3 范围内
 
-### 详细结果
+## 失败用例详情（如有）
+无。S3 全部 52 个用例通过。
 
-```
-  ✓ T1: MockEvent 构造与 synchronize
-  ✓ T2: MockSampler 构造
-  ✓ T3: MockSampler.prepare - greedy batch
-  ✓ T4: MockSampler.prepare - mixed batch
-  ✓ T5: MockSampler.sample - greedy 模式
-  ✓ T6: MockSampler.sample - random 模式
-  ✓ T7: MockSampler.sample - fixed 模式
-  ✓ T8: MockSampler.apply_temperature
-  ✓ T9: MockSampler.apply_top_p_top_k
-  ✓ T10: MockSampler.apply_logits_penalty
-  ✓ T11: MockAttnBackend.prepare_metadata
-  ✓ T12: MockAttnBackend.simulate_kv_recycle
-  ✓ T13: MockEngine.forward_batch - prefill batch
-  ✓ T14: MockEngine.forward_batch - decode batch
-  ✓ T15: MockEngine.forward_batch - ChunkedReq 跳过 completeOne
-  ✓ T16: MockEngine.forward_batch - CUDA Graph isGraphCapture
-  ✓ T17: MockEngine.forward_batch - copyDoneEvent
-  ✓ T18: MockEngine.forward_batch - isChunkPrefill
-  ✓ T19: SchedulerIOMixin - offline 模式
-  ✓ T20: SchedulerIOMixin - online 模式
-  ✓ T21: SimScheduler 构造
-  ✓ T22: SimScheduler._normalTick - 空 tick
-  ✓ T23: SimScheduler end-to-end - 短 prompt
-  ✓ T24: SimScheduler._processOneMsg - req_in
-  ✓ T25: SimScheduler._processOneMsg - maxTokens 调整
-  ✓ T26: SimScheduler._processOneMsg - ExitMsg
-  ✓ T27: SimScheduler._processOneMsg - BatchMsg
-  ✓ T28: SimScheduler._processOneMsg - AbortMsg
-  ✓ T29: SimScheduler._scheduleNextBatch - prefill 优先
-  ✓ T30: SimScheduler._scheduleNextBatch - 仅 decode
-  ✓ T31: SimScheduler._processLastData - copyDoneEvent
-  ✓ T32: SimScheduler._processLastData - prefill 完成
-  ✓ T33: SimScheduler._processLastData - 请求完成
-  ✓ T34: SimScheduler._processLastData - EOS 终止
-  ✓ T35: SimScheduler._processLastData - ChunkedReq 跳过
-  ✓ T36: SimScheduler._processLastData - finishedReqs 更新
-  ✓ T37: SimScheduler end-to-end - 完整流程
-  ✓ T38: SimScheduler._freeReqResources
-  ✓ T39: GraphRunner.padBatch - 使用 dummyReq
-  ✓ T40: MockEngine dummyReq 初始化
-  ✓ B1: 空 incoming + 空 pending + 空 decode
-  ✓ B2: maxNewTokens 被截断为 0
-  ✓ B3: 单 token 输入请求
-  ✓ B4: ChunkedReq 在 _processLastData 中
-  ✓ B5: decode batch 空
-  ✓ B6: prefill batch 含混合 ChunkedReq 和 Req
-  ✓ B7: greedy 采样 + temperature=0
-  ✓ B8: offline 模式 + 正常 runTick 调用
-  ✓ B9: ExitMsg 在 BatchMsg 内
-  ✓ B10: AbortMsg 目标请求不存在
-  ✓ B11: copyDoneEvent.synchronize 多次调用
-```
+## 边界条件覆盖
+- 空输入/空队列场景（B1、B5）
+- token 限制边界：maxNewTokens 截断为 0（B2）、单 token 输入（B3）
+- ChunkedReq 在调度与结果处理中的跳过逻辑（B4、B6、T15、T35）
+- 采样边界：greedy + temperature=0（B7）、fixed 输出模式（T7）
+- 消息边界：ExitMsg 在 BatchMsg 内（B9）、AbortMsg 目标不存在（B10）
+- 事件边界：copyDoneEvent 多次 synchronize（B11）
+- EOS 语义边界：ignoreEos=false 时 EOS 终止（T34）、ignoreEos=true 时输出 eos token 不终止（B12）
+
+## 本轮修复记录（对应上一轮 Code PR #77 驳回意见）
+
+1. **cacheType 硬编码修复**：`SimScheduler` 构造函数中 `new CacheManager(..., "naive")` 改为 `new CacheManager(..., config.cacheType)`，与 `SimulatorConfig.cacheType` 配置对齐（PR #77 评审意见第 1 条）。
+2. **EOS 判断字段修复**：`_processLastData` 中 EOS 判断由 `!req.samplingParams.skipSpecialTokens` 改为 `!req.samplingParams.ignoreEos`（PR #77 评审意见第 2 条）。`skipSpecialTokens` 默认值为 `true`，原先逻辑导致默认情况下 `!skipSpecialTokens === false`，EOS 永远无法触发；现新增 `SamplingParams.ignoreEos` 字段（默认 `false`，与 §9.11 L2969 对齐），EOS 在默认配置下正确触发。
+3. **测试同步更新**：T34/T36 移除 `skipSpecialTokens: false` 的旧写法（默认 ignoreEos=false 即检测 EOS）；新增 B12 验证 `ignoreEos=true` 时固定输出 eos token 也不提前终止。
 
 ## 回归测试结果
 
@@ -79,19 +94,4 @@
 |----------|--------|------|------|
 | S1 (core/entities) | 26 | 26 | 0 |
 | S2 (prefill/decode/scheduler) | 48 | 48 | 0 |
-| S3 (本次新增) | 51 | 51 | 0 |
-
-**结论**: 无回归，所有已有测试继续通过。
-
-## TypeScript 类型检查
-
-- `npx tsc --noEmit` 对 S3 相关模块（core、engine、scheduler、types、cache、entities、index、sglang-s3.test）无类型错误
-- 已有 P1a/P2a/P5/PP 测试文件存在 TS1361 类型错误（type export 被当作值使用），属于历史遗留问题，不在本次 S3 范围内
-
-## 测试修复记录
-
-初次运行有 5 个失败用例，修复如下：
-
-1. **T24/T25/T28**: 测试通过 `runTick(msgs)` 后检查 `prefillManager.pendingList`，但 `runTick` 执行完整 tick（消息处理→调度→forward→结果处理），请求已不在 pendingList 中。修复：改用 `_processOneMsg` 直接调用以隔离测试消息处理逻辑。
-2. **T29**: 同理，`runTick(msgs)` 后请求已被调度完毕。修复：通过 `_processOneMsg` 添加请求后直接调用 `_scheduleNextBatch`。
-3. **T39**: `GraphRunner.canUseCudaGraph` 使用 `includes(bs)` 仅支持精确匹配，无法支持 padding 对齐。修复：改为 `some(cbs => cbs >= bs)` 以支持 batch size 小于 captured graph size 时的 padding 场景。
+| S3 (本次新增) | 52 | 52 | 0 |

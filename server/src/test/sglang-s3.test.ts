@@ -518,7 +518,7 @@ test("T33: SimScheduler._processLastData - 请求完成", () => {
 test("T34: SimScheduler._processLastData - EOS 终止", () => {
   const config = makeConfig({ mockSampleMode: "fixed", fixedOutputToken: 2, eosTokenId: 2 });
   const scheduler = new SimScheduler(config);
-  const sp = new SamplingParams({ maxNewTokens: 10, skipSpecialTokens: false });
+  const sp = new SamplingParams({ maxNewTokens: 10 });
   const msgs: SimRequestMsg[] = [
     { tag: "req_in", uid: 1, inputIds: [1, 2], samplingParams: sp, outputLen: 10 },
   ];
@@ -546,7 +546,7 @@ test("T35: SimScheduler._processLastData - ChunkedReq 跳过", () => {
 test("T36: SimScheduler._processLastData - finishedReqs 更新", () => {
   const config = makeConfig({ mockSampleMode: "fixed", fixedOutputToken: 2, eosTokenId: 2 });
   const scheduler = new SimScheduler(config);
-  const sp = new SamplingParams({ maxNewTokens: 1, skipSpecialTokens: false });
+  const sp = new SamplingParams({ maxNewTokens: 1 });
   const msgs: SimRequestMsg[] = [
     { tag: "req_in", uid: 1, inputIds: [1, 2], samplingParams: sp, outputLen: 1 },
   ];
@@ -742,6 +742,31 @@ test("B11: copyDoneEvent.synchronize 多次调用", () => {
   evt.synchronize();
   evt.synchronize();
   assert.ok(true, "multiple synchronize calls should not throw");
+});
+
+// ===== B12: ignoreEos=true 时输出 eos token 不终止 =====
+test("B12: ignoreEos=true 时输出 eos token 不终止", () => {
+  const config = makeConfig({ mockSampleMode: "fixed", fixedOutputToken: 2, eosTokenId: 2 });
+  const scheduler = new SimScheduler(config);
+  const sp = new SamplingParams({ maxNewTokens: 3, ignoreEos: true });
+  const msgs: SimRequestMsg[] = [
+    { tag: "req_in", uid: 1, inputIds: [1, 2], samplingParams: sp, outputLen: 3 },
+  ];
+  // 第一个 tick：prefill + 首次 decode，输出 token=2(eos) 但应被忽略
+  const resp1 = scheduler.runTick(msgs);
+  const r1 = resp1.find(r => r.uid === 1);
+  assert.ok(r1, "should produce a response for request 1");
+  assert.strictEqual(r1!.finished, false, "eos token should be ignored when ignoreEos=true");
+  // 第二个 tick：继续 decode，仍不终止
+  const resp2 = scheduler.runTick([]);
+  const r2 = resp2.find(r => r.uid === 1);
+  assert.ok(r2, "should produce another response");
+  assert.strictEqual(r2!.finished, false, "still not finished on eos token with ignoreEos=true");
+  // 第三个 tick：达到 maxNewTokens=3 才终止
+  const resp3 = scheduler.runTick([]);
+  const r3 = resp3.find(r => r.uid === 1);
+  assert.ok(r3, "should produce the final response");
+  assert.strictEqual(r3!.finished, true, "should finish only when maxNewTokens reached");
 });
 
 // ===== 结果汇总 =====

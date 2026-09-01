@@ -53,6 +53,7 @@ export interface SamplingParamsOpts {
   minP?: number;
   stopTokenIds?: number[];
   skipSpecialTokens?: boolean;
+  ignoreEos?: boolean;
   dtype?: SamplingDtype;
 }
 
@@ -70,6 +71,7 @@ export class SamplingParams {
   readonly minP: number;
   readonly stopTokenIds: number[];
   readonly skipSpecialTokens: boolean;
+  readonly ignoreEos: boolean;
   readonly dtype: SamplingDtype;
 
   constructor(opts?: SamplingParamsOpts) {
@@ -82,6 +84,7 @@ export class SamplingParams {
     this.minP = opts?.minP ?? 0.0;
     this.stopTokenIds = opts?.stopTokenIds ?? [];
     this.skipSpecialTokens = opts?.skipSpecialTokens ?? true;
+    this.ignoreEos = opts?.ignoreEos ?? false;
     this.dtype = opts?.dtype ?? "float16";
   }
 

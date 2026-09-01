@@ -532,7 +532,7 @@ export class SimScheduler extends SchedulerIOMixin {
     this.engine = new MockEngine(config);
     this.tableManager = new TableManager(config.maxRunningReq, this.engine.pageTable);
     this.cacheManager = new CacheManager(
-      this.engine.numPages, config.pageSize, this.engine.pageTable, "naive"
+      this.engine.numPages, config.pageSize, this.engine.pageTable, config.cacheType
     );
     this.decodeManager = new DecodeManager(config.pageSize);
     this.prefillManager = new PrefillManager(
@@ -837,7 +837,7 @@ export class SimScheduler extends SchedulerIOMixin {
         req.appendHost(nextToken);
 
         // 判断 finished
-        const isEos = !req.samplingParams.skipSpecialTokens && nextToken === this.eosTokenId;
+        const isEos = !req.samplingParams.ignoreEos && nextToken === this.eosTokenId;
         const isFinished = !req.canDecode || isEos;
 
         // 构造响应
