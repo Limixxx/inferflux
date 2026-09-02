@@ -300,6 +300,8 @@ test("T16: MockEngine.forward_batch - CUDA Graph isGraphCapture", () => {
   const req = new Req({ rid: 1, inputIds: [1, 2, 3], samplingParams: new SamplingParams({ maxNewTokens: 5 }) });
   (req as unknown as { tableIdx: number }).tableIdx = 0;
   batch.reqs.set(1, req);
+  batch.numDecodeTokens = 1;
+  batch.extendInputTokens = 0;
   const sampleArgs = engine.mockSampler.prepare(batch);
   const output = engine.forward_batch(batch, sampleArgs);
   assert.strictEqual(output.isGraphCapture, true);

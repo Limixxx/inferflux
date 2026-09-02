@@ -1,3 +1,4 @@
+// engine — S1: MockEngine/GraphRunner/Sampler + P4: PP + P5: CP + P3a: MoE + S3: MockSampler/MockAttnBackend + S4: SimGraphRunner
 // engine — S1: MockEngine/GraphRunner/Sampler + P4: PP + P5: CP + P3a: MoE
 //        + S3: MockSampler/MockAttnBackend + P6: ParallelGroups 集成
 
@@ -61,6 +62,118 @@ export class GraphRunner {
       ...reqsArray,
       ...Array(dummyCount).fill(this.dummyReq),
     ];
+  }
+}
+
+// ===== SimGraphRunner（S4 §9.7 / §3.3.7 / §9.11） =====
+
+/** CUDA Graph 仿真运行器（对齐 §9.7 / §3.3.7 / §9.11 L3590-3623 + L3622 + L3624-3630） */
+export class SimGraphRunner {
+  private readonly enableCudaGraph: boolean;
+  readonly graphBsList: number[];
+  readonly maxGraphBs: number;
+  readonly vocabSize: number;
+  private readonly dummyReq: Req;
+  private readonly config: SimulatorConfig;
+  private readonly modelConfig: ModelConfig;
+  isValid: boolean;
+
+  constructor(config: SimulatorConfig, modelConfig: ModelConfig, dummyReq: Req) {
+    this.config = config;
+    this.modelConfig = modelConfig;
+    this.dummyReq = dummyReq;
+    this.enableCudaGraph = config.enableCudaGraph;
+    this.graphBsList = SimGraphRunner.determineCudaGraphBs(config);
+    this.maxGraphBs = this.graphBsList.length > 0 ? Math.max(...this.graphBsList) : 0;
+    this.vocabSize = modelConfig.vocabSize;
+    this.isValid = true;
+  }
+
+  /** 根据 config 计算 CUDA Graph batch size 分桶列表（对齐 §9.11 L3590-3602） */
+  static determineCudaGraphBs(config: SimulatorConfig): number[] {
+    if (config.cudaGraphBs !== null) {
+      return [...config.cudaGraphBs];
+    }
+    let maxBs: number;
+    if (config.cudaGraphMaxBs !== null) {
+      maxBs = config.cudaGraphMaxBs;
+    } else {
+      // 自动推断：totalGpuMemory > 80GiB → maxBs=256，否则 maxBs=160
+      const GiB = 1024 ** 3;
+      maxBs = config.totalGpuMemory > 80 * GiB ? 256 : 160;
+    }
+    if (maxBs < 1) return [];
+    const result: number[] = [1, 2, 4];
+    for (let bs = 8; bs <= maxBs; bs += 8) {
+      result.push(bs);
+    }
+    return result;
+  }
+
+  /** 判断 batch 是否可使用 CUDA Graph replay（对齐 §9.7 / §9.11） */
+  canUseCudaGraph(batch: Batch): boolean {
+    if (!this.enableCudaGraph) return false;
+    if (!this.isValid) return false;
+    return batch.numDecodeTokens > 0 && batch.extendInputTokens === 0 && batch.reqs.size <= this.maxGraphBs;
+  }
+
+  /** padBatch — 根据 canUseCudaGraph 结果决定是否 pad 到分桶边界 */
+  padBatch(batch: Batch): void {
+    let targetBs: number;
+    if (this.canUseCudaGraph(batch)) {
+      targetBs = this.graphBsList.find(bs => bs >= batch.reqs.size) ?? batch.reqs.size;
+    } else {
+      targetBs = batch.reqs.size;
+    }
+    this.padBatchToBs(batch, targetBs);
+  }
+
+  /** padBatchToBs — 补 padding req（dummyReq）至指定分桶边界（对齐 §9.11 L3609-3614） */
+  padBatchToBs(batch: Batch, targetBs: number): void {
+    const dummyCount = Math.max(0, targetBs - batch.reqs.size);
+    batch.paddedReqs = [
+      ...batch.reqs.values(),
+      ...Array(dummyCount).fill(this.dummyReq),
+    ];
+  }
+
+  /** graphReplayCostTicks — 模拟 CUDA Graph replay 的 GPU ticks 开销（对齐 Issue 描述公式） */
+  graphReplayCostTicks(bs: number): number {
+    const raw = this.config.graphReplayCostTicks * (1 + 0.05 * bs / 128);
+    // 减去微小 epsilon 以消除浮点精度在整数边界处的影响（如 100*1.1 → 110.00000000000001）
+    // || 0 消除 Math.ceil(-ε) 产生的 -0
+    return Math.ceil(raw - 1e-9) || 0;
+  }
+
+  /** eagerForwardCostTicks — 模拟 eager forward 的 GPU ticks 开销（对齐 Issue 描述公式） */
+  eagerForwardCostTicks(bs: number, tokensPerSeq: number): number {
+    if (tokensPerSeq > 1) {
+      return this.config.eagerForwardCostTicks * tokensPerSeq;
+    }
+    const raw = this.config.eagerForwardCostTicks * (1 + 0.1 * (bs - 1) / 128);
+    return Math.ceil(raw - 1e-9) || 0;
+  }
+
+  /** estimateGraphBuffer — 估算 CUDA Graph buffer 占用的显存（bytes）（对齐 §9.11 L3624-3630） */
+  estimateGraphBuffer(): number {
+    if (this.graphBsList.length === 0) return 0;
+    const maxBs = Math.max(...this.graphBsList);
+    return maxBs * this.modelConfig.hiddenSize * this.modelConfig.numLayers * 4;
+  }
+
+  /** invalidate — 标记 CUDA Graph 无效（对齐 §9.11 L3622 及 §10.5.3 L2683） */
+  invalidate(): void {
+    this.isValid = false;
+  }
+
+  /** replay — CUDA Graph replay（返回行数=batch.reqs.size，列数=vocabSize） */
+  replay(batch: Batch): number[][] {
+    return Array.from({ length: batch.reqs.size }, () => new Array(this.vocabSize).fill(0));
+  }
+
+  /** destroyCudaGraphs — 仿真中为 noop，但重置 isValid=true（模拟 graph 可重新捕获） */
+  destroyCudaGraphs(): void {
+    this.isValid = true;
   }
 }
 
@@ -270,6 +383,10 @@ export class MockEngine {
   readonly numPages: number;
   readonly maxSeqLen: number;
 
+  // S4 新增属性
+  readonly simGraphRunner: SimGraphRunner;
+
+  constructor(config: SimulatorConfig, modelConfig?: ModelConfig, ppRank: number = 0) {
   constructor(
     config: SimulatorConfig,
     modelConfig?: ModelConfig,
@@ -306,6 +423,10 @@ export class MockEngine {
     this.graphRunner = new GraphRunner(config, this.dummyReq);
     this.sampler = new Sampler(config);
 
+    // S4: 创建 SimGraphRunner
+    this.simGraphRunner = new SimGraphRunner(config, this.modelConfig, this.dummyReq);
+
+    // P4: PP 集成
     // PP
     this.ppRank = ppRank;
     this.isPpLast = (ppRank === config.ppSize - 1);
@@ -373,6 +494,20 @@ export class MockEngine {
   }
 
   /**
+   * S3+S4: forward_batch — 对齐 §9.11 L3676-3694
+   * S4: 使用 SimGraphRunner 的时间模型替代 S3 简单公式
+   */
+  forward_batch(batch: Batch, sampleArgs: BatchSamplingArgs): ForwardOutput {
+    // 1. CUDA Graph 判断（S4: 使用 simGraphRunner）
+    const isGraphCapture = this.simGraphRunner.canUseCudaGraph(batch);
+
+    // 2. mock forward
+    let logits: number[][];
+    if (isGraphCapture) {
+      logits = this.simGraphRunner.replay(batch);
+    } else {
+      logits = this._mockModelForward(batch);
+    }
    * S3+P6: forward_batch — 对齐 §9.11 L3676-3694
    *
    * 统一入口：调用 forwardBatch（含完整并行层循环），
@@ -399,6 +534,22 @@ export class MockEngine {
     //    传入 sampleArgs 以使用 MockSampler 采样管线（§9.11 L3689）
     const forwardOutput = this.forwardBatch(tokenIds, seqLen, batch, undefined, sampleArgs);
 
+    // 5. 时间模型（S4: 使用 SimGraphRunner 的时间公式）
+    const bs = batch.reqs.size;
+    const isChunkPrefill = [...batch.reqs.values()].some(r => r instanceof ChunkedReq);
+    let prefillBatchTime = 0;
+    let decodeBatchTime = 0;
+    if (batch.extendInputTokens > 0) {
+      const tokensPerSeq = Math.ceil(batch.extendInputTokens / bs);
+      prefillBatchTime = this.simGraphRunner.eagerForwardCostTicks(bs, tokensPerSeq);
+    }
+    if (batch.numDecodeTokens > 0) {
+      if (isGraphCapture) {
+        decodeBatchTime = this.simGraphRunner.graphReplayCostTicks(bs);
+      } else {
+        decodeBatchTime = this.simGraphRunner.eagerForwardCostTicks(bs, 1);
+      }
+    }
     // 5. 补充 S3 时间模型和标识字段
     const prefillBatchTime = batch.extendInputTokens > 0 ? this._computePrefillTime(batch) : 0;
     const decodeBatchTime = batch.numDecodeTokens > 0 ? this._computeDecodeTime(batch) : 0;
