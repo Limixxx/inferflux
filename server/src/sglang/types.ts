@@ -70,6 +70,10 @@ export interface SimulatorConfig {
   enableOverlap: boolean;
   cpuScheduleCostTicks: number;
   cpuProcessResultCostTicks: number;
+  tokenRecvDelayTicks: number;
+  eagerForwardExtraDelayTicks: number;
+  idleCountForFlush: number;
+  messagesHighWatermark: number;
 
   // ===== TP 张量并行配置 =====
   tpSize: number;
@@ -149,6 +153,10 @@ export const DEFAULT_SIMULATOR_CONFIG: SimulatorConfig = {
   enableOverlap: true,
   cpuScheduleCostTicks: 1,
   cpuProcessResultCostTicks: 1,
+  tokenRecvDelayTicks: 0,
+  eagerForwardExtraDelayTicks: 2,
+  idleCountForFlush: 2,
+  messagesHighWatermark: 1024,
   tpSize: 1,
   allReduceCostPerByteTicks: 0.001,
   allReduceLatencyTicks: 2,

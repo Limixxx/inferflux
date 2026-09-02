@@ -1,5 +1,6 @@
 // scheduler — K1: TableManager + S2: PrefillAdder/PrefillManager/DecodeManager
 // P6+S3: SimScheduler（ParallelGroups 接入 + EPLB 集成 + globalStep + §9.11 完整调度循环）
+// S5: SimulationClock + Overlap Scheduling（last_data 延迟 + 空 tick 刷新 + 高水位背压）
 
 import { Req, Batch, SamplingParams, BatchSamplingArgs } from "../core";
 import type { ForwardOutput } from "../core";
@@ -53,6 +54,64 @@ export class TableManager {
 
   free(tableIdx: number): void {
     this.freeTableIndices.push(tableIdx);
+  }
+}
+
+// ===== S5: SimulationClock（§4.1 / §4.3） =====
+
+/** 仿真时钟事件记录 */
+export interface SimEvent {
+  tick: number;
+  eventType: "gpu_start" | "gpu_end" | "cpu_schedule" | "cpu_process";
+  duration: number;
+}
+
+/**
+ * SimulationClock — GPU 时序追踪时钟（§4.1 / §4.3）
+ *
+ * 提供 tick 计数、advance、GPU 任务调度、重叠检测及 tick 回调队列功能。
+ * 默认不在 SimScheduler 中实例化；需要时通过配置或构造器选项启用。
+ */
+export class SimulationClock {
+  currentTick: number = 0;
+  gpuBusyUntil: number = 0;
+  events: SimEvent[] = [];
+  private _tickCallbacks: Array<(tick: number) => void> = [];
+
+  /** 推进时钟 deltaTicks 个 tick；单调不回退 */
+  advance(deltaTicks: number = 1): void {
+    if (deltaTicks <= 0) {
+      throw new Error(`advance(deltaTicks) requires deltaTicks > 0, got ${deltaTicks}`);
+    }
+    this.currentTick += deltaTicks;
+    for (const cb of this._tickCallbacks) {
+      cb(this.currentTick);
+    }
+  }
+
+  /** 安排 GPU 任务，返回完成时间（tick 号） */
+  scheduleGpu(durationTicks: number): number {
+    const start = Math.max(this.currentTick, this.gpuBusyUntil);
+    this.gpuBusyUntil = start + durationTicks;
+    this.events.push({ tick: start, eventType: "gpu_start", duration: durationTicks });
+    this.events.push({ tick: this.gpuBusyUntil, eventType: "gpu_end", duration: 0 });
+    return this.gpuBusyUntil;
+  }
+
+  /** GPU 当前是否繁忙（可重叠检测） */
+  canOverlap(): boolean {
+    return this.currentTick < this.gpuBusyUntil;
+  }
+
+  /** 注册 tick 回调，返回取消注册函数 */
+  onTick(callback: (tick: number) => void): () => void {
+    this._tickCallbacks.push(callback);
+    return () => {
+      const idx = this._tickCallbacks.indexOf(callback);
+      if (idx !== -1) {
+        this._tickCallbacks.splice(idx, 1);
+      }
+    };
   }
 }
 
@@ -550,6 +609,16 @@ export class SimScheduler extends SchedulerIOMixin {
   private _globalStep: number = 0;
   private _lastOverlapData: _OverlapData | null = null;
 
+  // S5: Overlap Scheduling 扩展字段
+  private _tickCounter: number = 0;
+  private _overlapWaitTicks: number;
+  private _eagerExtraDelayTicks: number;
+  private _idleCounter: number = 0;
+  private _lastDataPending: boolean = false;
+  private _lastDataAckTick: number = 0;
+  private _clock: SimulationClock | null;
+  private _highWatermark: number;
+
   constructor(
     config: SimulatorConfig,
     opts?: {
@@ -560,6 +629,7 @@ export class SimScheduler extends SchedulerIOMixin {
       engine?: MockEngine;
       cacheManager?: CacheManager;
       tableManager?: TableManager;
+      clock?: SimulationClock;
     },
   ) {
     super(config);
@@ -586,6 +656,20 @@ export class SimScheduler extends SchedulerIOMixin {
     this.prefillBudget = config.maxExtendTokens;
     this.overlapEnabled = config.enableOverlap;
     this.lastBatch = null;
+
+    // S5: Overlap Scheduling 配置
+    this._overlapWaitTicks = config.tokenRecvDelayTicks;
+    this._eagerExtraDelayTicks = config.eagerForwardExtraDelayTicks;
+    this._highWatermark = config.messagesHighWatermark;
+
+    // S5: SimulationClock 初始化
+    if (opts?.clock !== undefined) {
+      this._clock = opts.clock;
+    } else if (config.enableOverlap && config.enableMetrics) {
+      this._clock = new SimulationClock();
+    } else {
+      this._clock = null;
+    }
   }
 
   // ===== P6: 并行扩展属性 =====
@@ -598,6 +682,16 @@ export class SimScheduler extends SchedulerIOMixin {
   /** 获取 ParallelGroups（只读） */
   get groups(): ParallelGroups | null {
     return this._groups;
+  }
+
+  /** 获取 SimulationClock（只读） */
+  get clock(): SimulationClock | null {
+    return this._clock;
+  }
+
+  /** 获取当前 tick 计数器 */
+  get tickCounter(): number {
+    return this._tickCounter;
   }
 
   /**
@@ -684,20 +778,25 @@ export class SimScheduler extends SchedulerIOMixin {
     // 7. 递增 globalStep
     this._globalStep += 1;
 
+    // S5: 推进 SimulationClock
+    this._clock?.advance(1);
+
     return replies;
   }
 
   /**
-   * _overlapTick — 重叠调度循环（§9.4 / §9.11）
+   * _overlapTick — 重叠调度循环（§9.4 / §9.11 + S5 完整 Overlap Scheduling）
    *
-   * Phase 1: 处理消息 + 调度下一批（CPU phase，可与上一批 GPU 重叠）
-   * Phase 2: forward 当前批（GPU phase）
-   * Phase 3: 处理上一批结果（CPU phase，仿真中与 Phase 2 串行但逻辑上并行）
-   * Phase 4: EPLB maybe_rebalance（tick 末尾）
-   * Phase 5: 递增 globalStep
+   * Phase 1: 处理消息
+   * Phase 2: 处理上一批结果（带 last_data 延迟检查）— 先处理释放 GPU
+   * Phase 3: 调度下一批（仅当 GPU 空闲时，含高水位背压检查）
+   * Phase 4: forward 当前批（GPU phase）
+   * Phase 5: 保存当前批数据（带延迟计算）
+   * Phase 6: 空闲 tick 刷新检查
+   * Phase 7: 递增 tickCounter + EPLB + globalStep + advance clock
    */
   private _overlapTick(incoming: SimRequestMsg[]): SimRespMsg[] {
-    // Phase 1: 消息处理 + 调度
+    // Phase 1: 消息处理
     for (const msg of incoming) {
       const userMsg: UserMsg = {
         tag: "req_in",
@@ -708,35 +807,100 @@ export class SimScheduler extends SchedulerIOMixin {
       };
       this._processOneMsg(userMsg);
     }
-    const forwardInput = this._scheduleNextBatch();
 
-    // Phase 2: forward 当前批
-    const forwardOutput = forwardInput
-      ? this._forward(forwardInput)
-      : null;
-
-    // Phase 3: 处理上一批结果（与当前 GPU forward 逻辑上并行，仿真中串行执行）
+    // Phase 2: 处理上一批结果（带 last_data 延迟检查）
+    // 移到调度之前：先释放 GPU，再调度新批
     const replies: SimRespMsg[] = [];
-    if (this._lastOverlapData !== null) {
+    if (this._lastOverlapData !== null && this._tickCounter >= this._lastDataAckTick) {
       replies.push(...this._processLastData([
         this._lastOverlapData.forwardInput,
         this._lastOverlapData.forwardOutput,
       ]));
       this._lastOverlapData = null;
+      this._lastDataPending = false;
     }
 
-    // 保存当前批数据给下一 tick
+    // Phase 3: 调度下一批（仅当 GPU 空闲时）
+    // GPU 忙 = 上一批结果尚未处理 → 不调度新 forward，防止 _lastOverlapData 被覆盖
+    const gpuBusy = this._lastOverlapData !== null;
+    let forwardInput: ForwardInput | null;
+    if (gpuBusy || (this._highWatermark > 0 && this._incomingQueue.length > this._highWatermark)) {
+      forwardInput = null;
+    } else {
+      forwardInput = this._scheduleNextBatch();
+    }
+
+    // Phase 4: forward 当前批
+    const forwardOutput = forwardInput
+      ? this._forward(forwardInput)
+      : null;
+
+    // Phase 5: 保存当前批数据（带延迟计算）
     if (forwardOutput !== null && forwardInput !== null) {
       this._lastOverlapData = { forwardInput, forwardOutput };
+      const isGraphCapture = forwardOutput.isGraphCapture ?? false;
+      if (isGraphCapture) {
+        this._lastDataAckTick = this._tickCounter + this._overlapWaitTicks;
+      } else {
+        this._lastDataAckTick = this._tickCounter + this._overlapWaitTicks + this._eagerExtraDelayTicks;
+      }
+      this._lastDataPending = true;
+
+      // S5: 记录 GPU 占用到 clock
+      const gpuDuration = (forwardOutput.prefillBatchTime ?? 0) + (forwardOutput.decodeBatchTime ?? 0);
+      if (gpuDuration > 0) {
+        this._clock?.scheduleGpu(gpuDuration);
+      }
     }
 
-    // Phase 4: EPLB maybe_rebalance（§10.4.4）
-    this._maybeEplbRebalance();
+    // Phase 6: 空闲 tick 刷新检查（仅当 GPU 空闲时才算空闲）
+    if (incoming.length === 0 && forwardInput === null && !gpuBusy) {
+      this._idleCounter += 1;
+      if (this.config.idleCountForFlush > 0 && this._idleCounter >= this.config.idleCountForFlush) {
+        this._forcePrefillSchedule();
+        this._idleCounter = 0;
+      }
+    } else {
+      this._idleCounter = 0;
+    }
 
-    // Phase 5: 递增 globalStep
+    // Phase 7: 递增 tickCounter + EPLB + globalStep + advance clock
+    this._tickCounter += 1;
+    this._maybeEplbRebalance();
     this._globalStep += 1;
+    this._clock?.advance(1);
 
     return replies;
+  }
+
+  /**
+   * S5: _forcePrefillSchedule — 空闲 tick 时强制调度 prefill
+   * 仅触发 prefill 调度路径，不单独调度 decode batch。
+   * 续接完成的请求通过 PrefillAdder 自动加入 decodeManager，
+   * 下一 tick 的 decode 阶段自然调度之。
+   */
+  private _forcePrefillSchedule(): void {
+    const batch = this.prefillManager.scheduleNextBatch(this.prefillBudget);
+    if (batch === null) return;
+
+    const forwardInput = this._prepareBatch(batch);
+    const forwardOutput = this._forward(forwardInput);
+
+    // 保存结果到 _lastOverlapData，由下一 tick 的 Phase 3 处理
+    this._lastOverlapData = { forwardInput, forwardOutput };
+    const isGraphCapture = forwardOutput.isGraphCapture ?? false;
+    if (isGraphCapture) {
+      this._lastDataAckTick = this._tickCounter + this._overlapWaitTicks;
+    } else {
+      this._lastDataAckTick = this._tickCounter + this._overlapWaitTicks + this._eagerExtraDelayTicks;
+    }
+    this._lastDataPending = true;
+
+    // 记录 GPU 占用
+    const gpuDuration = (forwardOutput.prefillBatchTime ?? 0) + (forwardOutput.decodeBatchTime ?? 0);
+    if (gpuDuration > 0) {
+      this._clock?.scheduleGpu(gpuDuration);
+    }
   }
 
   // ===== §9.11 调度循环核心方法 =====
@@ -979,6 +1143,7 @@ export class SimScheduler extends SchedulerIOMixin {
       for (const req of batch.reqs.values()) {
         // ChunkedReq 跳过（对齐 §9.11 L2962-2963）
         if (req instanceof ChunkedReq) continue;
+        if (req.finished) continue;
 
         const nextToken = nextTokens !== null && tokenIdx < nextTokens.length
           ? nextTokens[tokenIdx]

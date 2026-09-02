@@ -1,0 +1,20 @@
+{
+  "issue_number": 19,
+  "issue_title": "[SGLang-Sim] S5: Overlap Scheduling（last_data 延迟 + 空 tick 刷新）+ SimulationClock",
+  "labels": [
+    "enhancement",
+    "sglang-simulator",
+    "sglang-high-risk",
+    "sglang-scheduler"
+  ],
+  "branch": "issue-19",
+  "base_branch": "main",
+  "worktree_path": ".worktree\\issue-19",
+  "solution_pr_url": "https://github.com/Limixxx/inferflux/pull/89",
+  "solution_pr_number": 89,
+  "code_pr_url": null,
+  "code_pr_number": null,
+  "project_item_id": "PVTI_lAHOBeeNX84Bg4hjzg4NOf8",
+  "created_at": "2026-09-02T06:49:44Z",
+  "status": "In progress"
+}
