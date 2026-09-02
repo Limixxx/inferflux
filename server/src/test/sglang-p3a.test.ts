@@ -561,18 +561,17 @@ test("MockEngine forwardBatch MoE 层返回 commTicks", () => {
     tpSize: 2,
   });
   const engine = new MockEngine(config);
-  const tokenIds = Array.from({ length: 100 }, (_, i) => i);
-  const ticks = engine.forwardBatch(tokenIds, 0);
-  assert.ok(ticks > 0, `MoE layer should return commTicks > 0, got ${ticks}`);
+  engine.forwardBatchSeqLen(100);
+  assert.ok(engine.metrics.parallel.tpCommTicks > 0, `MoE layer should produce commTicks > 0, got ${engine.metrics.parallel.tpCommTicks}`);
 });
 
-test("MockEngine forwardBatch 非 MoE 层返回 0", () => {
+test("MockEngine forwardBatch 非 MoE 层 tpCommTicks 为 0", () => {
   const config = makeConfig({
     modelConfig: { ...DEFAULT_SIMULATOR_CONFIG.modelConfig, isMoe: false },
   });
   const engine = new MockEngine(config);
-  const ticks = engine.forwardBatch([1, 2, 3], 0);
-  assert.strictEqual(ticks, 0);
+  engine.forwardBatchSeqLen(3);
+  assert.strictEqual(engine.metrics.parallel.tpCommTicks, 0);
 });
 
 // ==========================================

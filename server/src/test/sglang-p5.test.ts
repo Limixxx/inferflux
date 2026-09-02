@@ -103,7 +103,7 @@ test("T4 allGatherBytes formula correct (single layer, per-rank)", () => {
 test("T5 cpAllGatherCount increments per layer", () => {
   const config = cpConfig(4);
   const engine = new MockEngine(config);
-  engine.forwardBatch(1024);
+  engine.forwardBatchSeqLen(1024);
   assert.strictEqual(engine.metrics.parallel.cpAllGatherCount, config.modelConfig.numLayers);
 });
 
@@ -137,7 +137,7 @@ test("P1 precise total cpCommTicks = numLayers * singleLayerCommTicks", () => {
   const singleLayerTicks = singleLayerResult.commTicks;
 
   const engine = new MockEngine(config);
-  engine.forwardBatch(1024);
+  engine.forwardBatchSeqLen(1024);
   const expectedTotal = singleLayerTicks * config.modelConfig.numLayers;
   assert.strictEqual(engine.metrics.parallel.cpCommTicks, expectedTotal,
     `total cpCommTicks (${engine.metrics.parallel.cpCommTicks}) should equal ` +
@@ -189,7 +189,7 @@ test("P3 allGather bytes based on seqLenPerRank not full seqLen", () => {
 test("T8 cp_size=4 forwardBatch cpCommTicks > 0", () => {
   const config = cpConfig(4);
   const engine = new MockEngine(config);
-  engine.forwardBatch(1024);
+  engine.forwardBatchSeqLen(1024);
   assert.ok(engine.metrics.parallel.cpCommTicks > 0,
     `cpCommTicks should be >0, got ${engine.metrics.parallel.cpCommTicks}`);
 });
@@ -198,7 +198,7 @@ test("T8 cp_size=4 forwardBatch cpCommTicks > 0", () => {
 test("T9 cp_size=1 forwardBatch cpCommTicks = 0", () => {
   const config = cpConfig(1);
   const engine = new MockEngine(config);
-  engine.forwardBatch(1024);
+  engine.forwardBatchSeqLen(1024);
   assert.strictEqual(engine.metrics.parallel.cpCommTicks, 0);
   assert.strictEqual(engine.metrics.parallel.cpAllGatherCount, 0);
   assert.strictEqual(engine.metrics.parallel.cpSeqLenPerRank, 0);
@@ -208,7 +208,7 @@ test("T9 cp_size=1 forwardBatch cpCommTicks = 0", () => {
 test("T10 cp_size=4 seqLen=1024 cpSeqLenPerRank=256", () => {
   const config = cpConfig(4);
   const engine = new MockEngine(config);
-  engine.forwardBatch(1024);
+  engine.forwardBatchSeqLen(1024);
   assert.strictEqual(engine.metrics.parallel.cpSeqLenPerRank, 256);
 });
 
@@ -262,7 +262,7 @@ test("B4 numLayers=1 precise total commTicks", () => {
   const singleResult = sim1.simulateAttnForward(1024);
 
   const engine = new MockEngine(config1);
-  engine.forwardBatch(1024);
+  engine.forwardBatchSeqLen(1024);
 
   // num_layers=1 时总 cpCommTicks 应等于单层 commTicks
   assert.strictEqual(engine.metrics.parallel.cpCommTicks, singleResult.commTicks);
@@ -284,9 +284,9 @@ test("B4b numLayers=1 vs numLayers=32 allGatherBytes identical per-layer", () =>
     "Per-layer allGatherBytes should be the same regardless of numLayers");
   // 但总 cpCommTicks 应为 numLayers 倍
   const engine32 = new MockEngine(config32);
-  engine32.forwardBatch(1024);
+  engine32.forwardBatchSeqLen(1024);
   const engine1 = new MockEngine(config1);
-  engine1.forwardBatch(1024);
+  engine1.forwardBatchSeqLen(1024);
   assert.strictEqual(engine32.metrics.parallel.cpCommTicks,
     engine1.metrics.parallel.cpCommTicks * 32);
 });

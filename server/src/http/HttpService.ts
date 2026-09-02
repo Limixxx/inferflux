@@ -1,6 +1,7 @@
 import http from "http";
 import fs from "fs";
 import path from "path";
+import type { SimulationMetrics } from "../sglang/metrics";
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -30,6 +31,7 @@ export class HttpService {
   private readonly rootDir: string;
   private readonly port: number;
   private readonly simPort: number;
+  private _simulationMetrics: SimulationMetrics | null = null;
 
   constructor(port = 8888, rootDir?: string, simPort = 3001) {
     this.port = port;
@@ -37,6 +39,11 @@ export class HttpService {
     this.rootDir = rootDir || path.resolve(__dirname, "..", "..", "public");
     this.simPort = simPort;
     this.server = http.createServer((req, res) => this.handleRequest(req, res));
+  }
+
+  /** 注入 SimulationMetrics 实例，用于 /internal/metrics 端点 */
+  setSimulationMetrics(metrics: SimulationMetrics): void {
+    this._simulationMetrics = metrics;
   }
 
   /** Start the HTTP server. */
@@ -59,6 +66,17 @@ export class HttpService {
 
     // Proxy /api/* to the SimService
     if (urlPath.startsWith("/api/")) {
+      // P6: /api/internal/metrics 端点 — 直接返回 SimulationMetrics
+      if (urlPath === "/api/internal/metrics") {
+        if (this._simulationMetrics) {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(this._simulationMetrics.toJSON()));
+        } else {
+          res.writeHead(503, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "SimulationMetrics not available" }));
+        }
+        return;
+      }
       this.proxyToSim(urlPath.replace("/api", ""), req, res);
       return;
     }

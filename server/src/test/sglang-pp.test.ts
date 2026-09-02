@@ -136,7 +136,7 @@ test("T8 intermediate stage does not sample", () => {
   const modelConfig = makeModelConfig({});
   const engine = new MockEngine(config, modelConfig, 0); // ppRank=0 → not last
   const batch = makeBatch(2);
-  const output = engine.forwardBatch(batch);
+  const output = engine.forwardBatchReq(batch);
   assert.strictEqual(output.isIntermediate, true);
   assert.strictEqual(output.sampledIds, null);
 });
@@ -147,7 +147,7 @@ test("T9 last stage samples normally", () => {
   const modelConfig = makeModelConfig({});
   const engine = new MockEngine(config, modelConfig, 3); // ppRank=3 → last
   const batch = makeBatch(2);
-  const output = engine.forwardBatch(batch);
+  const output = engine.forwardBatchReq(batch);
   assert.strictEqual(output.isIntermediate, false);
   assert.ok(output.sampledIds !== null, "sampledIds should not be null");
   assert.ok(output.sampledIds!.length > 0, "sampledIds should be non-empty");
@@ -160,7 +160,7 @@ test("T10 sampling_counter unchanged at intermediate stage", () => {
   const engine = new MockEngine(config, modelConfig, 0);
   const counterBefore = engine.sampler.samplingCounter;
   const batch = makeBatch(2);
-  engine.forwardBatch(batch);
+  engine.forwardBatchReq(batch);
   assert.strictEqual(engine.sampler.samplingCounter, counterBefore, "samplingCounter should not change for intermediate stage");
 });
 
@@ -170,7 +170,7 @@ test("T11 ParallelMetrics backfill", () => {
   const modelConfig = makeModelConfig({});
   const engine = new MockEngine(config, modelConfig, 3); // last stage
   const batch = makeBatch(4);
-  engine.forwardBatch(batch);
+  engine.forwardBatchReq(batch);
   assert.ok(engine.metrics.parallel.ppBubbleTicks > 0, `ppBubbleTicks should be >0, got ${engine.metrics.parallel.ppBubbleTicks}`);
   assert.ok(engine.metrics.parallel.ppSendRecvTicks > 0, `ppSendRecvTicks should be >0, got ${engine.metrics.parallel.ppSendRecvTicks}`);
   assert.strictEqual(engine.metrics.parallel.ppNumMicroBatches, 2);
@@ -182,7 +182,7 @@ test("T12 pp_size=1 metrics all zero", () => {
   const modelConfig = makeModelConfig({});
   const engine = new MockEngine(config, modelConfig, 0);
   const batch = makeBatch(2);
-  engine.forwardBatch(batch);
+  engine.forwardBatchReq(batch);
   assert.strictEqual(engine.metrics.parallel.ppBubbleTicks, 0);
   assert.strictEqual(engine.metrics.parallel.ppSendRecvTicks, 0);
   assert.strictEqual(engine.metrics.parallel.ppNumMicroBatches, 0);
@@ -253,7 +253,7 @@ test("T18 CUDA Graph skips PP (R2-3)", () => {
   const modelConfig = makeModelConfig({});
   const engine = new MockEngine(config, modelConfig, 3);
   const batch = makeBatch(2); // batch size matches cudaGraphBs
-  engine.forwardBatch(batch);
+  engine.forwardBatchReq(batch);
   assert.strictEqual(engine.metrics.parallel.ppBubbleTicks, 0);
   assert.strictEqual(engine.metrics.parallel.ppSendRecvTicks, 0);
 });
@@ -466,7 +466,7 @@ test("E2E-1 gpipe full flow", () => {
   const modelConfig = makeModelConfig({});
   const engine = new MockEngine(config, modelConfig, 3);
   const batch = makeBatch(4);
-  engine.forwardBatch(batch);
+  engine.forwardBatchReq(batch);
   const expectedBubble = (4 - 1) * 10 * 2;
   assert.strictEqual(engine.metrics.parallel.ppBubbleTicks, expectedBubble);
   assert.strictEqual(engine.metrics.parallel.ppSendRecvTicks, engine.metrics.parallel.ppSendRecvTicks); // just verify non-negative
@@ -478,7 +478,7 @@ test("E2E-2 pp_size=1 full flow", () => {
   const modelConfig = makeModelConfig({});
   const engine = new MockEngine(config, modelConfig, 0);
   const batch = makeBatch(2);
-  const output = engine.forwardBatch(batch);
+  const output = engine.forwardBatchReq(batch);
   assert.strictEqual(output.isIntermediate, false);
   assert.strictEqual(engine.metrics.parallel.ppBubbleTicks, 0);
   assert.strictEqual(engine.metrics.parallel.ppSendRecvTicks, 0);
@@ -491,7 +491,7 @@ test("E2E-3 CUDA Graph + PP", () => {
   const modelConfig = makeModelConfig({});
   const engine = new MockEngine(config, modelConfig, 3);
   const batch = makeBatch(2);
-  engine.forwardBatch(batch);
+  engine.forwardBatchReq(batch);
   assert.strictEqual(engine.metrics.parallel.ppBubbleTicks, 0);
   assert.strictEqual(engine.metrics.parallel.ppSendRecvTicks, 0);
 });
@@ -504,8 +504,8 @@ test("E2E-4 overlap mode comparison", () => {
   const engineOverlap = new MockEngine(configOverlap, mc, 1);
   const engineNoOverlap = new MockEngine(configNoOverlap, mc, 1);
   const batch = makeBatch(4);
-  engineOverlap.forwardBatch(batch);
-  engineNoOverlap.forwardBatch(batch);
+  engineOverlap.forwardBatchReq(batch);
+  engineNoOverlap.forwardBatchReq(batch);
   assert.ok(engineOverlap.metrics.parallel.ppSendRecvTicks <= engineNoOverlap.metrics.parallel.ppSendRecvTicks,
     `overlap (${engineOverlap.metrics.parallel.ppSendRecvTicks}) should be <= non-overlap (${engineNoOverlap.metrics.parallel.ppSendRecvTicks})`);
 });
