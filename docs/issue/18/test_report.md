@@ -7,14 +7,20 @@ test_result: pass
 
 # Issue #18 测试报告
 
+## 驳回修复
+
+| 驳回意见 | 修复方式 |
+|----------|----------|
+| determineCudaGraphBs 未实现 totalGpuMemory 自动计算：cudaGraphMaxBs 为 null 时缺少 `totalGpuMemory > 80GiB → maxBs=256` 自动推断逻辑 | ✅ 已修复：determineCudaGraphBs 在 cudaGraphMaxBs 为 null 时，根据 totalGpuMemory 自动推断 maxBs（>80GiB→256，≤80GiB→160）。同步更新 T4/T5 测试用例 |
+
 ## 验收测试结果
 | 用例编号 | 测试描述 | 结果 |
 |----------|---------|------|
 | T1 | SimGraphRunner 构造 | ✅ pass |
 | T2 | determineCudaGraphBs - 用户指定 | ✅ pass |
 | T3 | determineCudaGraphBs - 自动计算 | ✅ pass |
-| T4 | determineCudaGraphBs - 大显存 | ✅ pass |
-| T5 | determineCudaGraphBs - 小显存 | ✅ pass |
+| T4 | determineCudaGraphBs - 大显存自动推断 | ✅ pass |
+| T5 | determineCudaGraphBs - 小显存自动推断 | ✅ pass |
 | T6 | determineCudaGraphBs - 禁用 | ✅ pass |
 | T7 | canUseCudaGraph - 禁用 | ✅ pass |
 | T8 | canUseCudaGraph - decode batch | ✅ pass |
@@ -46,6 +52,13 @@ test_result: pass
 | T34 | 分桶边界 bs=31→32 | ✅ pass |
 | T35 | eager 与 graph 切换一致 | ✅ pass |
 | T36 | destroyCudaGraphs 为 noop | ✅ pass |
+
+## 类型检查
+- 结果: pass（S4 相关文件无类型错误；其他 Issue 的测试文件存在既有类型错误，与本次修改无关）
+
+## 边界条件覆盖
+| 编号 | 边界条件 | 结果 |
+|------|---------|------|
 | B1 | cudaGraphBs 为空列表 | ✅ pass |
 | B2 | bs=0 的空 batch | ✅ pass |
 | B3 | bs 恰好等于分桶值 | ✅ pass |
@@ -57,20 +70,5 @@ test_result: pass
 | B9 | 连续多次 invalidate | ✅ pass |
 | B10 | invalidate 后 forward_batch 走 eager | ✅ pass |
 
-## 类型检查
-- 结果: pass（S4 修改文件 engine/index.ts、scheduler/index.ts、sglang/index.ts、sglang-s4.test.ts 无编译错误）
-
-## 既有测试回归
-- S3 测试套件: 52/52 pass
-
-## 边界条件覆盖
-- cudaGraphBs 为空列表 → maxGraphBs=0，canUseCudaGraph=false
-- bs=0 空 batch → canUseCudaGraph=false，padBatch 不 pad
-- bs 恰好等于分桶值 → 不添加 dummy
-- bs=1 decode batch → canUseCudaGraph=true，pad 到 bucket 1
-- chunked prefill → canUseCudaGraph=false
-- graphReplayCostTicks=0 → 返回 0
-- eagerForwardCostTicks=0 → 返回 0
-- 多次 padBatch → 不累积 padding
-- 连续多次 invalidate → isValid 保持 false
-- invalidate 后 forward_batch 走 eager 路径
+## 回归测试
+- S3 测试全部通过（52 passed, 0 failed）

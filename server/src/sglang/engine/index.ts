@@ -87,12 +87,19 @@ export class SimGraphRunner {
     this.isValid = true;
   }
 
-  /** 根据 config 计算 CUDA Graph batch size 分桶列表 */
+  /** 根据 config 计算 CUDA Graph batch size 分桶列表（对齐 §9.11 L3590-3602） */
   static determineCudaGraphBs(config: SimulatorConfig): number[] {
     if (config.cudaGraphBs !== null) {
       return [...config.cudaGraphBs];
     }
-    const maxBs = config.cudaGraphMaxBs ?? 0;
+    let maxBs: number;
+    if (config.cudaGraphMaxBs !== null) {
+      maxBs = config.cudaGraphMaxBs;
+    } else {
+      // 自动推断：totalGpuMemory > 80GiB → maxBs=256，否则 maxBs=160
+      const GiB = 1024 ** 3;
+      maxBs = config.totalGpuMemory > 80 * GiB ? 256 : 160;
+    }
     if (maxBs < 1) return [];
     const result: number[] = [1, 2, 4];
     for (let bs = 8; bs <= maxBs; bs += 8) {

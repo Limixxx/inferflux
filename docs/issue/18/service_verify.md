@@ -7,15 +7,14 @@ service_status: ok
 # Issue #18 服务验证日志
 
 ## 服务启动
-- HTTP 服务: ✅ ok（http://localhost:8888）
-- Sim API 服务: ✅ ok（http://localhost:3001）
+- HTTP 服务: ✅ ok（HttpService on :8899）
+- Sim 服务: ✅ ok（SimService on :3099）
 
 ## API 端点验证
 | 端点 | 方法 | 状态 | 响应摘要 |
 |------|------|------|---------|
-| /health | GET | ✅ 200 | {"ok":true} |
-| /state | GET | ✅ 200 | 返回完整仿真状态数据（Len=3476） |
-| /api/health | GET | ✅ 200 | {"ok":true}（通过 HttpService 代理） |
+| /health | GET | ✅ 200 | `{"ok":true}` |
+| /state | GET | ✅ 200 | 完整仿真状态 JSON（含 params, gauges, metrics, series） |
 
 ## 异常信息
 无

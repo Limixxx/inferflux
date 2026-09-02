@@ -176,19 +176,22 @@ test("T3: determineCudaGraphBs - 自动计算", () => {
   assert.deepStrictEqual(result, [1, 2, 4, 8, 16, 24]);
 });
 
-// ===== T4: determineCudaGraphBs - 大显存 =====
-test("T4: determineCudaGraphBs - 大显存", () => {
-  // totalGpuMemory > 80GiB → 默认 maxBs 使用 cudaGraphMaxBs
-  const config = makeConfig({ cudaGraphBs: null, cudaGraphMaxBs: 256, totalGpuMemory: 81 * 1024 ** 3 });
+// ===== T4: determineCudaGraphBs - 大显存自动推断 =====
+test("T4: determineCudaGraphBs - 大显存自动推断", () => {
+  // cudaGraphMaxBs=null 时，totalGpuMemory > 80GiB → 自动推断 maxBs=256
+  const config = makeConfig({ cudaGraphBs: null, cudaGraphMaxBs: null, totalGpuMemory: 81 * 1024 ** 3 });
   const result = SimGraphRunner.determineCudaGraphBs(config);
-  assert.ok(result.includes(256), "should include maxBs=256 for large GPU memory");
+  assert.ok(result.includes(256), "totalGpuMemory > 80GiB should auto-infer maxBs=256");
+  assert.ok(!result.includes(264), "should not exceed maxBs=256");
 });
 
-// ===== T5: determineCudaGraphBs - 小显存 =====
-test("T5: determineCudaGraphBs - 小显存", () => {
-  const config = makeConfig({ cudaGraphBs: null, cudaGraphMaxBs: 160, totalGpuMemory: 64 * 1024 ** 3 });
+// ===== T5: determineCudaGraphBs - 小显存自动推断 =====
+test("T5: determineCudaGraphBs - 小显存自动推断", () => {
+  // cudaGraphMaxBs=null 时，totalGpuMemory <= 80GiB → 自动推断 maxBs=160
+  const config = makeConfig({ cudaGraphBs: null, cudaGraphMaxBs: null, totalGpuMemory: 64 * 1024 ** 3 });
   const result = SimGraphRunner.determineCudaGraphBs(config);
-  assert.ok(result.includes(160), "should include maxBs=160 for smaller GPU memory");
+  assert.ok(result.includes(160), "totalGpuMemory <= 80GiB should auto-infer maxBs=160");
+  assert.ok(!result.includes(168), "should not exceed maxBs=160");
 });
 
 // ===== T6: determineCudaGraphBs - 禁用 =====
