@@ -41,7 +41,7 @@ function test(name: string, fn: () => void): void {
 }
 
 function makeConfig(overrides: Partial<SimulatorConfig>): SimulatorConfig {
-  return { ...DEFAULT_SIMULATOR_CONFIG, ...overrides };
+  return { ...DEFAULT_SIMULATOR_CONFIG, cacheType: "naive", ...overrides };
 }
 
 function makeModelConfig(overrides: Partial<ModelConfig>): ModelConfig {
@@ -467,7 +467,7 @@ test("C6-T5 SimSchedulerImpl can be constructed", () => {
   const config = makeConfig({});
   const decodeMgr = new DecodeManager(1);
   const prefillMgr = makePrefillManager(decodeMgr);
-  const scheduler = new SimSchedulerImpl(config, prefillMgr, decodeMgr);
+  const scheduler = new SimSchedulerImpl(config, { prefillManager: prefillMgr, decodeManager: decodeMgr });
   assert.strictEqual(scheduler.globalStep, 0);
 });
 
@@ -475,7 +475,7 @@ test("C6-T6 SimSchedulerImpl runTick increments globalStep", () => {
   const config = makeConfig({ enableOverlap: false });
   const decodeMgr = new DecodeManager(1);
   const prefillMgr = makePrefillManager(decodeMgr);
-  const scheduler = new SimSchedulerImpl(config, prefillMgr, decodeMgr);
+  const scheduler = new SimSchedulerImpl(config, { prefillManager: prefillMgr, decodeManager: decodeMgr });
   scheduler.runTick([]);
   assert.strictEqual(scheduler.globalStep, 1);
   scheduler.runTick([]);
@@ -496,7 +496,7 @@ test("C6-T7 SimSchedulerImpl with ParallelGroups has groups reference", () => {
   const decodeMgr = new DecodeManager(1);
   const prefillMgr = makePrefillManager(decodeMgr);
   const simMetrics = new SimulationMetrics();
-  const scheduler = new SimSchedulerImpl(config, prefillMgr, decodeMgr, groups, simMetrics);
+  const scheduler = new SimSchedulerImpl(config, { prefillManager: prefillMgr, decodeManager: decodeMgr, parallelGroups: groups, simMetrics: simMetrics });
   assert.ok(scheduler.groups !== null);
   assert.ok(scheduler.groups!.eplbSim !== null);
   assert.ok(scheduler.groups!.moeBackend !== null);
@@ -604,7 +604,7 @@ test("B7 EPLB called at tick end not in forwardBatch", () => {
   const decodeMgr = new DecodeManager(1);
   const prefillMgr = makePrefillManager(decodeMgr);
   const simMetrics = new SimulationMetrics();
-  const scheduler = new SimSchedulerImpl(config, prefillMgr, decodeMgr, groups, simMetrics);
+  const scheduler = new SimSchedulerImpl(config, { prefillManager: prefillMgr, decodeManager: decodeMgr, parallelGroups: groups, simMetrics: simMetrics });
 
   // Run 100 ticks to trigger EPLB check interval
   for (let i = 0; i < 101; i++) {

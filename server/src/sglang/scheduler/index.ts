@@ -1,6 +1,5 @@
 // scheduler — K1: TableManager + S2: PrefillAdder/PrefillManager/DecodeManager
-// P6: SimSchedulerImpl（ParallelGroups 接入 + EPLB 集成 + globalStep）
-// S3: SchedulerIOMixin + SimScheduler（§9.11 完整调度循环）
+// P6+S3: SimScheduler（ParallelGroups 接入 + EPLB 集成 + globalStep + §9.11 完整调度循环）
 
 import { Req, Batch, SamplingParams, BatchSamplingArgs } from "../core";
 import type { ForwardOutput } from "../core";
@@ -461,401 +460,6 @@ export class PrefillManager {
   }
 }
 
-// ===== P6: SimScheduler 实现 =====
-
-/** P6 调度结果，传递给 SimSchedulerImpl._forward */
-interface P6ScheduleInput {
-  batch: Batch;
-  isPrefill: boolean;
-}
-
-/** P6 Forward 返回数据，用于 SimSchedulerImpl._processLastData */
-interface P6ForwardData {
-  batch: Batch;
-  isPrefill: boolean;
-  output: ForwardOutput;
-}
-
-/**
- * SimScheduler — 仿真调度器（P6 ParallelGroups 集成 + §9.11 完整调度循环）
- *
- * 在 S1 的调度逻辑基础上，接入 ParallelGroups：
- * - 构造器接收 optional ParallelGroups + MockEngine
- * - add_request 路径中集成 dpController.select_rank_for_request
- * - tick 包含完整调度循环：_processOneMsg → _scheduleNextBatch → _forward → _processLastData
- * - tick 末尾调用 EPLB maybe_rebalance（§10.4.4）
- * - 维护 _globalStep 供 EPLB 使用
- */
-export class SimSchedulerImpl {
-  private readonly _config: import("../types").SimulatorConfig;
-  private readonly _prefillManager: PrefillManager;
-  private readonly _decodeManager: DecodeManager;
-  private readonly _groups: ParallelGroups | null;
-  private readonly _simMetrics: SimulationMetrics | null;
-  private readonly _engine: {
-    forwardBatch(
-      tokenIds: number[],
-      seqLen: number,
-      batch: Batch,
-      localBatchSizes?: number[],
-    ): ForwardOutput;
-  } | null;
-  private readonly _cacheManager: CacheManager | null;
-  private readonly _tableManager: TableManager | null;
-  private _globalStep: number = 0;
-  private _lastData: P6ForwardData | null = null;
-  private _finishedReqs: Set<Req> = new Set();
-
-  constructor(
-    config: import("../types").SimulatorConfig,
-    prefillManager: PrefillManager,
-    decodeManager: DecodeManager,
-    parallelGroups?: ParallelGroups,
-    simMetrics?: SimulationMetrics,
-    engine?: {
-      forwardBatch(
-        tokenIds: number[],
-        seqLen: number,
-        batch: Batch,
-        localBatchSizes?: number[],
-      ): ForwardOutput;
-    },
-    cacheManager?: CacheManager,
-    tableManager?: TableManager,
-  ) {
-    this._config = config;
-    this._prefillManager = prefillManager;
-    this._decodeManager = decodeManager;
-    this._groups = parallelGroups ?? null;
-    this._simMetrics = simMetrics ?? null;
-    this._engine = engine ?? null;
-    this._cacheManager = cacheManager ?? null;
-    this._tableManager = tableManager ?? null;
-  }
-
-  /** 当前全局步数 */
-  get globalStep(): number {
-    return this._globalStep;
-  }
-
-  /** 获取 ParallelGroups（只读） */
-  get groups(): ParallelGroups | null {
-    return this._groups;
-  }
-
-  /**
-   * 添加请求到调度器
-   *
-   * P6 扩展：若 dpSize > 1，先通过 dpController.select_rank_for_request 分配 DP rank
-   */
-  addRequest(msg: SimRequestMsg): void {
-    // DP 请求分发
-    if (this._groups && this._config.dpSize > 1) {
-      const neededPages = 1; // 简化：每个请求至少需要 1 页
-      const rank = this._groups.dpController.select_rank_for_request(neededPages);
-      if (rank === null) {
-        // OOM：拒绝请求
-        return;
-      }
-      const dpRank = rank.rank;
-      const sp = msg.samplingParams ?? new SamplingParams({ maxNewTokens: msg.outputLen });
-      const pr = new PendingReq({
-        rid: msg.uid,
-        inputIds: msg.inputIds,
-        samplingParams: sp,
-        dpRank,
-      });
-      this._prefillManager.pendingList.push(pr);
-      return;
-    }
-    this._prefillManager.addOneReq(msg);
-  }
-
-  /**
-   * 执行一个调度 tick（§9.11）
-   * @param incoming 进入的请求消息列表
-   * @returns 响应消息列表
-   */
-  runTick(incoming: SimRequestMsg[]): SimRespMsg[] {
-    if (this._config.enableOverlap) {
-      return this._overlap_tick(incoming);
-    }
-    return this._normal_tick(incoming);
-  }
-
-  /**
-   * Normal（非 overlap）tick（§9.11）
-   *
-   * 完整调度循环：
-   * 1. _processOneMsg — 处理 incoming 消息
-   * 2. _scheduleNextBatch — 调度 prefill/decode batch
-   * 3. _forward — 执行前向推理
-   * 4. _processLastData — 处理结果（finished 检测、资源释放）
-   * 5. EPLB maybe_rebalance（tick 末尾）
-   * 6. 递增 globalStep
-   */
-  private _normal_tick(incoming: SimRequestMsg[]): SimRespMsg[] {
-    // 步骤 1：处理入队消息
-    for (const msg of incoming) {
-      this._processOneMsg(msg);
-    }
-
-    // 步骤 2：调度下一个 batch（prefill 优先，否则 decode）
-    const forwardInput = this._scheduleNextBatch();
-
-    // 步骤 3：forward
-    const forwardOutput = forwardInput
-      ? this._forward(forwardInput)
-      : null;
-
-    // 步骤 4：处理 forward 结果
-    const replies: SimRespMsg[] = [];
-    if (forwardOutput !== null && forwardInput !== null) {
-      const data: P6ForwardData = { batch: forwardInput.batch, isPrefill: forwardInput.isPrefill, output: forwardOutput };
-      replies.push(...this._processLastData(data));
-    }
-
-    // 步骤 5：EPLB maybe_rebalance（§10.4.4）
-    this._maybeEplbRebalance();
-
-    // 步骤 6：递增 globalStep
-    this._globalStep += 1;
-
-    return replies;
-  }
-
-  /**
-   * Overlap tick（§9.4 / §9.11）
-   *
-   * 完整 overlap 调度循环：
-   * Phase 1: 处理消息 + 调度下一批（CPU phase，可与上一批 GPU 重叠）
-   * Phase 2: forward 当前批（GPU phase）
-   * Phase 3: 处理上一批结果（CPU phase，仿真中与 Phase 2 串行但逻辑上并行）
-   */
-  private _overlap_tick(incoming: SimRequestMsg[]): SimRespMsg[] {
-    // Phase 1: 消息处理 + 调度
-    for (const msg of incoming) {
-      this._processOneMsg(msg);
-    }
-    const forwardInput = this._scheduleNextBatch();
-
-    // Phase 2: forward 当前批
-    const forwardOutput = forwardInput
-      ? this._forward(forwardInput)
-      : null;
-
-    // Phase 3: 处理上一批结果（与当前 GPU forward 逻辑上并行，仿真中串行执行）
-    const replies: SimRespMsg[] = [];
-    if (this._lastData !== null) {
-      replies.push(...this._processLastData(this._lastData));
-      this._lastData = null;
-    }
-
-    // 保存当前批数据给下一 tick
-    if (forwardOutput !== null && forwardInput !== null) {
-      this._lastData = { batch: forwardInput.batch, isPrefill: forwardInput.isPrefill, output: forwardOutput };
-    }
-
-    // EPLB maybe_rebalance（§10.4.4）
-    this._maybeEplbRebalance();
-
-    // 递增 globalStep
-    this._globalStep += 1;
-
-    return replies;
-  }
-
-  // ===== §9.11 调度循环核心方法 =====
-
-  /** 处理单条入队消息（§9.11 _process_one_msg） */
-  private _processOneMsg(msg: SimRequestMsg): void {
-    if (msg.tag === "req_in" || msg.tag === "req_resume") {
-      this.addRequest(msg);
-    }
-    // AbortBackendMsg 处理可以后续扩展
-  }
-
-  /**
-   * 调度下一个 batch（§9.11 _schedule_next_batch）
-   * 优先调度 prefill，无 prefill 则调度 decode
-   */
-  private _scheduleNextBatch(): P6ScheduleInput | null {
-    const prefillBudget = this._config.maxExtendTokens;
-
-    // 优先 prefill
-    const prefillBatch = this._prefillManager.scheduleNextBatch(prefillBudget);
-    if (prefillBatch !== null) {
-      // _prepare_batch: 分配 KV cache 页
-      if (this._cacheManager) {
-        for (const req of prefillBatch.reqs.values()) {
-          this._cacheManager.allocatePaged(req as unknown as {
-            deviceLen: number; cachedLen: number; tableIdx: number;
-          });
-        }
-      }
-      return { batch: prefillBatch, isPrefill: true };
-    }
-
-    // 否则 decode
-    const decodeBatch = this._decodeManager.scheduleNextBatch();
-    if (decodeBatch !== null) {
-      return { batch: decodeBatch, isPrefill: false };
-    }
-
-    return null;
-  }
-
-  /**
-   * 执行前向推理（§9.11 _forward）
-   *
-   * 1. 提取 tokenIds / seqLen 从 batch 中
-   * 2. 调用 engine.forwardBatch
-   * 3. 对每个 req 调用 completeOne（ChunkedReq 除外）
-   * 4. DecodeManager.filterReqs 更新可 decode 集合
-   */
-  private _forward(input: P6ScheduleInput): ForwardOutput | null {
-
-    const batch = input.batch;
-    // 提取 tokenIds（取第一个 req 的 inputIds）
-    const firstReq = batch.reqs.values().next().value;
-    const tokenIds = firstReq ? firstReq.inputIds : [];
-    const seqLen = tokenIds.length;
-
-    // 调用 engine.forwardBatch
-    if (!this._engine) return null;
-    const output = this._engine.forwardBatch(tokenIds, seqLen, batch);
-
-    // 对每个 req 调用 completeOne（ChunkedReq 除外）
-    for (const req of batch.reqs.values()) {
-      if (!(req instanceof ChunkedReq)) {
-        req.completeOne();
-      }
-    }
-
-    // DecodeManager.filterReqs 更新可 decode 集合
-    const newReqs = [...batch.reqs.values()].filter(r => !(r instanceof ChunkedReq));
-    this._decodeManager.filterReqs(newReqs);
-
-    return output;
-  }
-
-  /**
-   * 处理 forward 结果（§9.11 _process_last_data）
-   *
-   * 1. 对每个 req：
-   *    a. ChunkedReq → 跳过
-   *    b. req.appendHost(nextToken)
-   *    c. finished = !canDecode || nextToken == eos
-   *    d. finished → DecodeManager.removeReq + _freeReqResources
-   *    e. prefill 非 finished → CacheManager.cacheReq(finished=false)
-   * 2. 返回 DetokenizeMsg 列表
-   */
-  private _processLastData(data: P6ForwardData): SimRespMsg[] {
-    const replies: SimRespMsg[] = [];
-    const batch = data.batch;
-    const output = data.output;
-
-    if (!output.sampledIds) {
-      // 中间 PP stage，无采样结果
-      return replies;
-    }
-
-    const nextTokens: number[] = output.sampledIds;
-    const newFinishedReqs: Set<Req> = new Set();
-
-    // 进入 lazy_free_region（如果 cacheManager 可用）
-    if (this._cacheManager) {
-      this._cacheManager.beginLazyFree();
-    }
-
-    try {
-      let tokenIdx = 0;
-      for (const req of batch.reqs.values()) {
-        if (req instanceof ChunkedReq) {
-          continue; // ChunkedReq 采样结果被丢弃
-        }
-
-        const nextToken = nextTokens[tokenIdx] ?? 0;
-        tokenIdx++;
-
-        req.appendHost(nextToken);
-
-        const finished = !req.canDecode ||
-          (nextToken === this._config.eosTokenId && !req.samplingParams.ignoreEos);
-
-        replies.push({
-          tag: finished ? "resp_done" : "resp_token",
-          uid: req.rid,
-          nextToken,
-          finished,
-        });
-
-        if (finished && !this._finishedReqs.has(req)) {
-          this._decodeManager.removeReq(req);
-          this._freeReqResources(req);
-          newFinishedReqs.add(req);
-        } else if (data.isPrefill && !finished) {
-          if (this._cacheManager) {
-            this._cacheManager.cacheReq(
-              req as unknown as {
-                inputIds: number[]; cachedLen: number;
-                tableIdx: number; cacheHandle: BaseCacheHandle | null;
-              },
-              false,
-            );
-          }
-        }
-      }
-    } finally {
-      // 退出 lazy_free_region
-      if (this._cacheManager) {
-        this._cacheManager.endLazyFree();
-      }
-    }
-
-    this._finishedReqs = newFinishedReqs;
-    return replies;
-  }
-
-  /** 释放请求资源（§9.11 _free_req_resources） */
-  private _freeReqResources(req: Req): void {
-    if (this._tableManager) {
-      const tableIdx = (req as unknown as { tableIdx?: number }).tableIdx;
-      if (tableIdx !== undefined) {
-        this._tableManager.free(tableIdx);
-      }
-    }
-    if (this._cacheManager) {
-      this._cacheManager.freeCache(
-        req as unknown as {
-          inputIds: number[]; cachedLen: number;
-          tableIdx: number; cacheHandle: BaseCacheHandle | null;
-        },
-      );
-    }
-  }
-
-  /**
-   * EPLB maybe_rebalance 调用
-   *
-   * 在 tick 末尾调用（§10.4.4），条件：
-   * - groups.eplbSim 非 null
-   * - groups.moeBackend 非 null
-   */
-  private _maybeEplbRebalance(): void {
-    if (this._groups?.eplbSim && this._groups.moeBackend) {
-      const result = this._groups.eplbSim.maybe_rebalance(
-        this._globalStep,
-        this._groups.moeBackend.expertLoadCounts,
-        this._groups.moeBackend,
-      );
-      if (result.shouldRebalance && this._simMetrics) {
-        this._simMetrics.parallel.epRebalanceCostTicks += result.rebalanceTicks;
-      }
-    }
-  }
-}
-
 // ===== S3: SchedulerIOMixin（§9.6 L2193-2241） =====
 
 /**
@@ -903,16 +507,29 @@ export class SchedulerIOMixin {
   }
 }
 
-// ===== S3: SimScheduler（§9.11 L2888-3058） =====
+// ===== P6+S3: SimScheduler（§9.11 完整调度循环 + P6 ParallelGroups 集成） =====
 
 /**
- * SimScheduler — 仿真调度器（§9.11 L2888-3058）
+ * Forward 返回数据，用于 overlap tick 中延迟处理
+ */
+interface _OverlapData {
+  forwardInput: ForwardInput;
+  forwardOutput: ForwardOutput;
+}
+
+/**
+ * SimScheduler — 仿真调度器（§9.11 L2888-3058 + P6 ParallelGroups 集成）
  *
- * 继承 SchedulerIOMixin，实现完整的 normal_tick 调度循环：
+ * 继承 SchedulerIOMixin，实现完整的调度循环：
  * _processOneMsg → _scheduleNextBatch → _forward → _processLastData
  *
- * S3 仅实现 normal_tick；overlap 为 S5 范围
- * overlapEnabled=true 时降级为 normal_tick，确保 end-to-end 可跑通
+ * 合并后的统一调度器同时具备：
+ * - §9.11 完整调度循环（4种消息类型、_prepareBatch 6步、tokenPool读写、copyDoneEvent.synchronize()）
+ * - P6 并行特性（ParallelGroups 接入、EPLB tick末尾、globalStep、overlap tick、DP 分发）
+ *
+ * 构造器两种模式：
+ * - 简单模式：new SimScheduler(config) — 内部创建 MockEngine/TableManager/CacheManager
+ * - 完整模式：new SimScheduler(config, { prefillManager, decodeManager, ... }) — 注入依赖
  */
 export class SimScheduler extends SchedulerIOMixin {
   readonly engine: MockEngine;
@@ -927,17 +544,42 @@ export class SimScheduler extends SchedulerIOMixin {
   readonly overlapEnabled: boolean;
   lastBatch: Batch | null;
 
-  constructor(config: SimulatorConfig) {
+  // P6: 并行扩展字段
+  private readonly _groups: ParallelGroups | null;
+  private readonly _simMetrics: SimulationMetrics | null;
+  private _globalStep: number = 0;
+  private _lastOverlapData: _OverlapData | null = null;
+
+  constructor(
+    config: SimulatorConfig,
+    opts?: {
+      prefillManager?: PrefillManager;
+      decodeManager?: DecodeManager;
+      parallelGroups?: ParallelGroups;
+      simMetrics?: SimulationMetrics;
+      engine?: MockEngine;
+      cacheManager?: CacheManager;
+      tableManager?: TableManager;
+    },
+  ) {
     super(config);
-    this.engine = new MockEngine(config);
-    this.tableManager = new TableManager(config.maxRunningReq, this.engine.pageTable);
-    this.cacheManager = new CacheManager(
+
+    // P6: 并行扩展
+    const groups = opts?.parallelGroups ?? null;
+    this._groups = groups;
+    this._simMetrics = opts?.simMetrics ?? null;
+
+    // S3: 核心组件 — 支持外部注入或内部创建
+    this.engine = opts?.engine ?? new MockEngine(config);
+    this.tableManager = opts?.tableManager ?? new TableManager(config.maxRunningReq, this.engine.pageTable);
+    this.cacheManager = opts?.cacheManager ?? new CacheManager(
       this.engine.numPages, config.pageSize, this.engine.pageTable, config.cacheType
     );
-    this.decodeManager = new DecodeManager(config.pageSize);
-    this.prefillManager = new PrefillManager(
+    this.decodeManager = opts?.decodeManager ?? new DecodeManager(config.pageSize);
+    this.prefillManager = opts?.prefillManager ?? new PrefillManager(
       this.cacheManager, this.tableManager, this.decodeManager
     );
+
     this.finishedReqs = new Set();
     this.eosTokenId = config.eosTokenId;
     this.tokenPool = this.tableManager.tokenPool;
@@ -946,12 +588,57 @@ export class SimScheduler extends SchedulerIOMixin {
     this.lastBatch = null;
   }
 
+  // ===== P6: 并行扩展属性 =====
+
+  /** 当前全局步数 */
+  get globalStep(): number {
+    return this._globalStep;
+  }
+
+  /** 获取 ParallelGroups（只读） */
+  get groups(): ParallelGroups | null {
+    return this._groups;
+  }
+
   /**
-   * 执行一个调度 tick
-   * S3: 仅实现 normal_tick；overlap 为 S5 范围
-   * 当 overlapEnabled=true 时降级为 normal_tick，确保 end-to-end 可跑通
+   * 添加请求到调度器
+   *
+   * P6 扩展：若 dpSize > 1，先通过 dpController.select_rank_for_request 分配 DP rank
+   */
+  addRequest(msg: SimRequestMsg): void {
+    // DP 请求分发
+    if (this._groups && this.config.dpSize > 1) {
+      const neededPages = 1; // 简化：每个请求至少需要 1 页
+      const rank = this._groups.dpController.select_rank_for_request(neededPages);
+      if (rank === null) {
+        // OOM：拒绝请求
+        return;
+      }
+      const dpRank = rank.rank;
+      const sp = msg.samplingParams ?? new SamplingParams({ maxNewTokens: msg.outputLen });
+      const pr = new PendingReq({
+        rid: msg.uid,
+        inputIds: msg.inputIds,
+        samplingParams: sp,
+        dpRank,
+      });
+      this.prefillManager.pendingList.push(pr);
+      return;
+    }
+    this.prefillManager.addOneReq(msg);
+  }
+
+  // ===== §9.11 调度循环入口 =====
+
+  /**
+   * 执行一个调度 tick（§9.11）
+   * @param incoming 进入的请求消息列表
+   * @returns 响应消息列表
    */
   runTick(incoming: SimRequestMsg[]): SimRespMsg[] {
+    if (this.overlapEnabled) {
+      return this._overlapTick(incoming);
+    }
     return this._normalTick(incoming);
   }
 
@@ -962,6 +649,8 @@ export class SimScheduler extends SchedulerIOMixin {
    * 3. ongoingData = null
    * 4. if forwardInput !== null: ongoingData = [forwardInput, _forward(forwardInput)]
    * 5. return _processLastData(ongoingData)
+   * 6. EPLB maybe_rebalance（tick 末尾，§10.4.4）
+   * 7. 递增 globalStep
    */
   private _normalTick(incoming: SimRequestMsg[]): SimRespMsg[] {
     // 1. 消息处理：将 SimRequestMsg 转换为 UserMsg 后处理
@@ -980,15 +669,77 @@ export class SimScheduler extends SchedulerIOMixin {
     const forwardInput = this._scheduleNextBatch();
 
     // 3-4. forward
-    let ongoingData: [ForwardInput, import("../core").ForwardOutput] | null = null;
+    let ongoingData: [ForwardInput, ForwardOutput] | null = null;
     if (forwardInput !== null) {
       const forwardOutput = this._forward(forwardInput);
       ongoingData = [forwardInput, forwardOutput];
     }
 
     // 5. 结果处理
-    return this._processLastData(ongoingData);
+    const replies = this._processLastData(ongoingData);
+
+    // 6. EPLB maybe_rebalance（§10.4.4）
+    this._maybeEplbRebalance();
+
+    // 7. 递增 globalStep
+    this._globalStep += 1;
+
+    return replies;
   }
+
+  /**
+   * _overlapTick — 重叠调度循环（§9.4 / §9.11）
+   *
+   * Phase 1: 处理消息 + 调度下一批（CPU phase，可与上一批 GPU 重叠）
+   * Phase 2: forward 当前批（GPU phase）
+   * Phase 3: 处理上一批结果（CPU phase，仿真中与 Phase 2 串行但逻辑上并行）
+   * Phase 4: EPLB maybe_rebalance（tick 末尾）
+   * Phase 5: 递增 globalStep
+   */
+  private _overlapTick(incoming: SimRequestMsg[]): SimRespMsg[] {
+    // Phase 1: 消息处理 + 调度
+    for (const msg of incoming) {
+      const userMsg: UserMsg = {
+        tag: "req_in",
+        uid: msg.uid,
+        inputIds: msg.inputIds,
+        samplingParams: msg.samplingParams,
+        outputLen: msg.outputLen,
+      };
+      this._processOneMsg(userMsg);
+    }
+    const forwardInput = this._scheduleNextBatch();
+
+    // Phase 2: forward 当前批
+    const forwardOutput = forwardInput
+      ? this._forward(forwardInput)
+      : null;
+
+    // Phase 3: 处理上一批结果（与当前 GPU forward 逻辑上并行，仿真中串行执行）
+    const replies: SimRespMsg[] = [];
+    if (this._lastOverlapData !== null) {
+      replies.push(...this._processLastData([
+        this._lastOverlapData.forwardInput,
+        this._lastOverlapData.forwardOutput,
+      ]));
+      this._lastOverlapData = null;
+    }
+
+    // 保存当前批数据给下一 tick
+    if (forwardOutput !== null && forwardInput !== null) {
+      this._lastOverlapData = { forwardInput, forwardOutput };
+    }
+
+    // Phase 4: EPLB maybe_rebalance（§10.4.4）
+    this._maybeEplbRebalance();
+
+    // Phase 5: 递增 globalStep
+    this._globalStep += 1;
+
+    return replies;
+  }
+
+  // ===== §9.11 调度循环核心方法 =====
 
   /**
    * _processOneMsg — 处理单条消息（对齐 §9.11 L3027-3052）
@@ -1031,7 +782,8 @@ export class SimScheduler extends SchedulerIOMixin {
     }
     if (sp.maxNewTokens <= 0) return;
 
-    this.prefillManager.addOneReq({
+    // P6: 通过 addRequest 以支持 DP 分发
+    this.addRequest({
       tag: "req_in",
       uid: msg.uid,
       inputIds: msg.inputIds,
@@ -1145,11 +897,11 @@ export class SimScheduler extends SchedulerIOMixin {
   /**
    * _forward — 执行 forward（对齐 §9.11 L3012-3025）
    * 1. 从 tokenPool 读取 input_ids 填入 batch.inputIds
-   * 2. 调用 engine.forward_batch
+   * 2. 调用 engine.forward_batch（内部调用 forwardBatch 含完整并行层循环）
    * 3. 将 next_tokens 写入 tokenPool（跳过 ChunkedReq 位置：write_p < 0 时跳过）
    * 4. 调用 decodeManager.filterReqs
    */
-  private _forward(forwardInput: ForwardInput): import("../core").ForwardOutput {
+  private _forward(forwardInput: ForwardInput): ForwardOutput {
     const { batch, sampleArgs } = forwardInput;
     const [inputTableIdx, inputPositions] = forwardInput.inputTuple;
     const [writeTableIdx, writePositions] = forwardInput.writeTuple;
@@ -1167,7 +919,7 @@ export class SimScheduler extends SchedulerIOMixin {
     }
     batch.inputIds = inputIds;
 
-    // 2. 调用 forward_batch
+    // 2. 调用 forward_batch（内部调用 forwardBatch 含完整并行层循环）
     const forwardOutput = this.engine.forward_batch(batch, sampleArgs);
 
     // 3. 将 next_tokens 写入 tokenPool
@@ -1204,7 +956,7 @@ export class SimScheduler extends SchedulerIOMixin {
    * 4. 更新 finishedReqs
    */
   private _processLastData(
-    ongoingData: [ForwardInput, import("../core").ForwardOutput] | null,
+    ongoingData: [ForwardInput, ForwardOutput] | null,
   ): SimRespMsg[] {
     if (ongoingData === null) return [];
 
@@ -1287,4 +1039,30 @@ export class SimScheduler extends SchedulerIOMixin {
       cacheHandle: (req as unknown as { cacheHandle: BaseCacheHandle | null }).cacheHandle,
     });
   }
+
+  // ===== P6: EPLB 集成 =====
+
+  /**
+   * EPLB maybe_rebalance 调用
+   *
+   * 在 tick 末尾调用（§10.4.4），条件：
+   * - groups.eplbSim 非 null
+   * - groups.moeBackend 非 null
+   */
+  private _maybeEplbRebalance(): void {
+    if (this._groups?.eplbSim && this._groups.moeBackend) {
+      const result = this._groups.eplbSim.maybe_rebalance(
+        this._globalStep,
+        this._groups.moeBackend.expertLoadCounts,
+        this._groups.moeBackend,
+      );
+      if (result.shouldRebalance && this._simMetrics) {
+        this._simMetrics.parallel.epRebalanceCostTicks += result.rebalanceTicks;
+      }
+    }
+  }
 }
+
+// ===== P6 向后兼容：SimSchedulerImpl 作为 SimScheduler 的类型别名 =====
+/** @deprecated 使用 SimScheduler 代替 */
+export const SimSchedulerImpl = SimScheduler;

@@ -373,20 +373,20 @@ export class MockEngine {
   }
 
   /**
-   * S3: forward_batch — 对齐 §9.11 L3676-3694
-   * 返回完整 ForwardOutput，含采样结果和时间/标识字段
+   * S3+P6: forward_batch — 对齐 §9.11 L3676-3694
+   *
+   * 统一入口：调用 forwardBatch（含完整并行层循环），
+   * 再补充 S3 时间模型和标识字段。
    */
   forward_batch(batch: Batch, sampleArgs: BatchSamplingArgs): ForwardOutput {
     // 1. CUDA Graph 判断
     const isGraphCapture = this.graphRunner.canUseCudaGraph(batch);
+    const isChunkPrefill = [...batch.reqs.values()].some(r => r instanceof ChunkedReq);
 
-    // 2. mock forward
-    let logits: number[][];
-    if (isGraphCapture) {
-      logits = this.graphRunner.replay(batch);
-    } else {
-      logits = this._mockModelForward(batch);
-    }
+    // 2. 提取 tokenIds / seqLen 从 batch 中
+    const firstReq = batch.reqs.values().next().value;
+    const tokenIds = firstReq ? firstReq.inputIds : [];
+    const seqLen = tokenIds.length;
 
     // 3. complete_one（跳过 ChunkedReq），对齐 §9.11 L3684-3686
     for (const req of batch.reqs.values()) {
@@ -395,30 +395,20 @@ export class MockEngine {
       }
     }
 
-    // 4. 采样，对齐 §9.11 L3689
-    const nextTokens = this.mockSampler.sample(logits, sampleArgs);
+    // 4. 调用 forwardBatch（含完整并行层循环：ZMQ广播→层循环→CPU barrier→PP→TP汇总→采样）
+    const forwardOutput = this.forwardBatch(tokenIds, seqLen, batch);
 
-    // 5. 时间模型
-    const isChunkPrefill = [...batch.reqs.values()].some(r => r instanceof ChunkedReq);
+    // 5. 补充 S3 时间模型和标识字段
     const prefillBatchTime = batch.extendInputTokens > 0 ? this._computePrefillTime(batch) : 0;
     const decodeBatchTime = batch.numDecodeTokens > 0 ? this._computeDecodeTime(batch) : 0;
 
-    // 6. 构造 ForwardOutput，对齐 §9.11 L3690-3694
-    const copyDoneEvent = new MockEvent();
-    copyDoneEvent.record();
-
     return {
-      logits,
-      nextTokensGpu: nextTokens,
-      nextTokensCpu: [...nextTokens],
-      copyDoneEvent,
-      isIntermediate: false,
+      ...forwardOutput,
       prefillBatchTime,
       decodeBatchTime,
       isChunkPrefill,
       isGraphCapture,
-      isPpLast: true,
-      sampledIds: nextTokens,
+      isPpLast: this.isPpLast,
     };
   }
 

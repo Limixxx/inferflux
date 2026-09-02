@@ -1,6 +1,6 @@
 ---
 issue_number: 30
-verify_date: 2026-09-01
+verify_date: 2026-09-02
 service_status: ok
 ---
 
@@ -9,42 +9,43 @@ service_status: ok
 ## 服务启动
 
 - HTTP 服务: ✅ ok
-  - HttpService 在端口 19877 启动成功
+  - SimService 在端口 3099 启动成功
+  - HttpService 在端口 8899 启动成功
   - 静态文件服务正常
-  - API 代理配置正常 (→ localhost:3001)
+  - API 代理配置正常 (→ localhost:3099)
 
 ## API 端点验证
 
 | 端点 | 方法 | 状态 | 响应摘要 |
 |------|------|------|---------|
-| /api/internal/metrics | GET | ✅ 503 | 未注入 metrics 时返回 { error: "SimulationMetrics not available" } |
-| /api/internal/metrics (注入 metrics) | GET | ✅ 200 | parallel 指标 JSON（含 tpCommTicks=386, ppBubbleTicks=10, ppSendRecvTicks=2, tpSize=2, ppSize=2, worldSize=4） |
+| /health | GET | ✅ 200 | {"ok":true} |
+| /state | GET | ✅ 200 | 完整仿真状态 JSON（含 params, gauges, snapshot, series） |
 
 ## 验证详情
 
-### T1: 未注入 metrics 时返回 503
-- ✅ 新建 HttpService 实例（未调用 setSimulationMetrics）
-- ✅ GET /api/internal/metrics 返回 503 状态码
-- ✅ 响应体: { error: "SimulationMetrics not available" }
+### T1: 健康检查
+- ✅ GET /health 返回 200 状态码
+- ✅ 响应体: {"ok":true}
 
-### T2: 注入 metrics 后返回 200
-- ✅ MockEngine 创建 (tpSize=2, ppSize=2) 并执行 forwardBatchSeqLen(128)
-- ✅ HttpService.setSimulationMetrics(engine.metrics) 注入成功
-- ✅ GET /api/internal/metrics 返回 200 状态码
-- ✅ 响应体含 parallel 对象
+### T2: 仿真状态
+- ✅ GET /state 返回 200 状态码
+- ✅ 响应体包含 params 对象（含 qps, arrivalDist, mode 等字段）
+- ✅ 响应体包含 gauges 对象（含 pQueue, dQueue, running 等字段）
+- ✅ 响应体包含 snapshot 对象（含 ttft, tpot, e2e 延迟统计）
+- ✅ 响应体包含 series 对象（含时序数据）
 
-### T3: parallel 对象指标验证
-- ✅ parallel.tpCommTicks = 386 (number)
-- ✅ parallel.ppBubbleTicks = 10 (number)
-- ✅ parallel.ppSendRecvTicks = 2 (number)
-- ✅ parallel.tpSize = 2 (number)
-- ✅ parallel.ppSize = 2 (number)
-- ✅ parallel.worldSize = 4 (number)
+### T3: 构建验证
+- ✅ npx tsc 编译零错误
+- ✅ dist/ 目录产物完整
+- ✅ node dist/index.js 启动无报错
 
-### T4: 全部并行维度指标字段存在
-- ✅ tpCommTicks, dpAttnCommTicks, epCommTicks 存在
-- ✅ ppBubbleTicks, cpCommTicks, ppSendRecvTicks 存在
-- ✅ worldSize, tpSize, dpSize, epSize, ppSize, cpSize 存在
+## 合并后调度器验证
+
+- ✅ SimScheduler 类继承 SchedulerIOMixin
+- ✅ 构造器支持 `new SimScheduler(config)` 简单模式
+- ✅ 构造器支持 `new SimScheduler(config, opts)` 完整模式
+- ✅ SimSchedulerImpl 作为 const 别名向后兼容
+- ✅ forward_batch 调用 forwardBatch 含完整并行层循环
 
 ## 异常信息
 
