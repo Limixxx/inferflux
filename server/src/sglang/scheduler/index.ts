@@ -678,8 +678,8 @@ export class SimScheduler extends SchedulerIOMixin {
    * 7. 构造 ForwardInput
    */
   private _prepareBatch(batch: Batch): ForwardInput {
-    // 1. padBatch
-    this.engine.graphRunner.padBatch(batch);
+    // 1. padBatch（S4: 使用 simGraphRunner）
+    this.engine.simGraphRunner.padBatch(batch);
 
     // 2. allocatePaged + 3-6 计算
     const inputTableIdx: number[] = [];

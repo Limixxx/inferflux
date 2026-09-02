@@ -1,0 +1,19 @@
+{
+  "issue_number": 18,
+  "issue_title": "[SGLang-Sim] S4: SimGraphRunner — CUDA Graph bs 分桶 pad_batch graph_replay_cost",
+  "labels": [
+    "enhancement",
+    "sglang-simulator",
+    "sglang-engine"
+  ],
+  "branch": "issue-18",
+  "base_branch": "main",
+  "worktree_path": ".worktree\\issue-18",
+  "solution_pr_url": "https://github.com/Limixxx/inferflux/pull/82",
+  "solution_pr_number": 82,
+  "code_pr_url": null,
+  "code_pr_number": null,
+  "project_item_id": "PVTI_lAHOBeeNX84Bg4hjzg4NOXk",
+  "created_at": "2026-09-01T07:17:56Z",
+  "status": "In progress"
+}

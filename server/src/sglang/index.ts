@@ -141,6 +141,10 @@ export {
   GraphRunner,
   Sampler,
 } from "./engine";
+// S4: SimGraphRunner
+export {
+  SimGraphRunner,
+} from "./engine";
 // P3a+S3: MockEngine（含 MoE 集成） + MockSampler/MockAttnBackend
 export {
   MockEngine,
