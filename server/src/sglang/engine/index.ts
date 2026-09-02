@@ -396,7 +396,8 @@ export class MockEngine {
     }
 
     // 4. 调用 forwardBatch（含完整并行层循环：ZMQ广播→层循环→CPU barrier→PP→TP汇总→采样）
-    const forwardOutput = this.forwardBatch(tokenIds, seqLen, batch);
+    //    传入 sampleArgs 以使用 MockSampler 采样管线（§9.11 L3689）
+    const forwardOutput = this.forwardBatch(tokenIds, seqLen, batch, undefined, sampleArgs);
 
     // 5. 补充 S3 时间模型和标识字段
     const prefillBatchTime = batch.extendInputTokens > 0 ? this._computePrefillTime(batch) : 0;
@@ -498,7 +499,8 @@ export class MockEngine {
     const firstReq = batch.reqs.values().next().value;
     const tokenIds = firstReq ? firstReq.inputIds : [];
     const seqLen = tokenIds.length;
-    return this.forwardBatch(tokenIds, seqLen, batch, localBatchSizes);
+    const sampleArgs = this.mockSampler.prepare(batch);
+    return this.forwardBatch(tokenIds, seqLen, batch, localBatchSizes, sampleArgs);
   }
 
   /**
@@ -514,7 +516,8 @@ export class MockEngine {
     });
     batch.reqs.set(0, req);
     batch.readyIds.push(0);
-    return this.forwardBatch(batch.reqs.get(0)!.inputIds, seqLen, batch);
+    const sampleArgs = this.mockSampler.prepare(batch);
+    return this.forwardBatch(batch.reqs.get(0)!.inputIds, seqLen, batch, undefined, sampleArgs);
   }
 
   /**
@@ -524,6 +527,7 @@ export class MockEngine {
    * @param seqLen 序列长度
    * @param batch 批处理
    * @param localBatchSizes DP-Attn 各 rank 的本地 batch 大小（可选）
+   * @param sampleArgs 采样参数（由 MockSampler.prepare 生成，§9.11 L3689）
    * @returns ForwardOutput
    */
   forwardBatch(
@@ -531,6 +535,7 @@ export class MockEngine {
     seqLen: number,
     batch: Batch,
     localBatchSizes?: number[],
+    sampleArgs?: BatchSamplingArgs,
   ): ForwardOutput {
     // ── 层循环前：ZMQ 广播 token IDs ──
     let totalCommTicks = this.groups.tpComm.broadcastAll([tokenIds]);
@@ -595,7 +600,7 @@ export class MockEngine {
     this.simMetrics.parallel.ppSize = this.config.ppSize;
     this.simMetrics.parallel.cpSize = this.config.cpSize;
 
-    // 步骤 8: 采样（仅最后 PP stage）
+    // 步骤 8: 采样（仅最后 PP stage）— 使用 MockSampler（§9.11 L3689）
     const logits = this._mockModelForward(batch);
     if (!this.isPpLast) {
       const copyDoneEvent = new MockEvent();
@@ -609,7 +614,8 @@ export class MockEngine {
         sampledIds: null,
       };
     }
-    const nextTokenIds = this.sampler.sample(logits.flat(), batch.reqs.size);
+    const effectiveSampleArgs = sampleArgs ?? this.mockSampler.prepare(batch);
+    const nextTokenIds = this.mockSampler.sample(logits, effectiveSampleArgs);
     const copyDoneEvent = new MockEvent();
     copyDoneEvent.record();
     return {

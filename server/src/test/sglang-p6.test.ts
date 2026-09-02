@@ -503,6 +503,106 @@ test("C6-T7 SimSchedulerImpl with ParallelGroups has groups reference", () => {
 });
 
 // ==========================================
+// Case 7: MockSampler 集成验证（驳回修复）
+// ==========================================
+console.log("\n--- Case 7: MockSampler 集成验证 ---");
+
+test("C7-T1 forwardBatch uses MockSampler not old Sampler", () => {
+  const config = makeConfig({});
+  const engine = new MockEngine(config);
+  const batch = new Batch();
+  const req = new Req({ rid: 1, inputIds: [1, 2, 3], samplingParams: new SamplingParams() });
+  batch.reqs.set(1, req);
+  batch.readyIds.push(1);
+  // 调用 forwardBatch 前，旧 Sampler 计数器为 0
+  assert.strictEqual(engine.sampler.samplingCounter, 0);
+  const result = engine.forwardBatch([1, 2, 3], 3, batch);
+  // 调用 forwardBatch 后，旧 Sampler 计数器仍为 0（证明未使用旧 Sampler）
+  assert.strictEqual(engine.sampler.samplingCounter, 0,
+    "Old Sampler.samplingCounter should remain 0 — MockSampler is used instead");
+  // MockSampler 产生了有效的 sampledIds
+  assert.ok(result.sampledIds !== null, "sampledIds should not be null");
+  assert.ok(result.sampledIds!.length > 0, "sampledIds should have tokens");
+});
+
+test("C7-T2 mockSampler.prepare returns valid BatchSamplingArgs", () => {
+  const config = makeConfig({});
+  const engine = new MockEngine(config);
+  const batch = new Batch();
+  const req = new Req({ rid: 1, inputIds: [1, 2, 3], samplingParams: new SamplingParams() });
+  batch.reqs.set(1, req);
+  batch.readyIds.push(1);
+  const sampleArgs = engine.mockSampler.prepare(batch);
+  assert.ok(sampleArgs !== null && sampleArgs !== undefined, "prepare should return BatchSamplingArgs");
+  // 默认 SamplingParams isGreedy=true → temperatures=null
+  assert.strictEqual(sampleArgs.temperatures, null, "greedy → temperatures=null");
+});
+
+test("C7-T3 forwardBatchReq uses MockSampler.prepare internally", () => {
+  const config = makeConfig({});
+  const engine = new MockEngine(config);
+  const batch = new Batch();
+  const req = new Req({ rid: 1, inputIds: [1, 2, 3], samplingParams: new SamplingParams() });
+  batch.reqs.set(1, req);
+  batch.readyIds.push(1);
+  const result = engine.forwardBatchReq(batch);
+  // 旧 Sampler 未被调用
+  assert.strictEqual(engine.sampler.samplingCounter, 0,
+    "forwardBatchReq should use MockSampler, not old Sampler");
+  assert.ok(result.sampledIds !== null, "sampledIds should not be null");
+});
+
+test("C7-T4 forwardBatchSeqLen uses MockSampler.prepare internally", () => {
+  const config = makeConfig({});
+  const engine = new MockEngine(config);
+  const result = engine.forwardBatchSeqLen(10);
+  // 旧 Sampler 未被调用
+  assert.strictEqual(engine.sampler.samplingCounter, 0,
+    "forwardBatchSeqLen should use MockSampler, not old Sampler");
+  assert.ok(result.sampledIds !== null, "sampledIds should not be null");
+});
+
+test("C7-T5 forwardBatch with explicit sampleArgs overrides prepare", () => {
+  const config = makeConfig({});
+  const engine = new MockEngine(config);
+  const batch = new Batch();
+  const req = new Req({ rid: 1, inputIds: [1, 2, 3], samplingParams: new SamplingParams() });
+  batch.reqs.set(1, req);
+  batch.readyIds.push(1);
+  // 传入显式 sampleArgs（非 greedy）
+  const { BatchSamplingArgs } = require("../sglang/core");
+  const explicitArgs = new BatchSamplingArgs({ temperatures: [0.5], topK: [50], topP: [0.9] });
+  const result = engine.forwardBatch([1, 2, 3], 3, batch, undefined, explicitArgs);
+  assert.strictEqual(engine.sampler.samplingCounter, 0, "old Sampler should not be used");
+  assert.ok(result.sampledIds !== null, "sampledIds should not be null");
+});
+
+test("C7-T6 forwardBatch with PP last stage uses MockSampler", () => {
+  const config = moeMlaConfig({ ppSize: 2 });
+  const engine = new MockEngine(config, config.modelConfig, 1); // ppRank=1 → last stage
+  const batch = new Batch();
+  const req = new Req({ rid: 1, inputIds: [1, 2, 3], samplingParams: new SamplingParams() });
+  batch.reqs.set(1, req);
+  batch.readyIds.push(1);
+  const result = engine.forwardBatch([1, 2, 3], 3, batch);
+  assert.strictEqual(engine.sampler.samplingCounter, 0, "old Sampler should not be used");
+  assert.ok(result.sampledIds !== null, "sampledIds should not be null for last PP stage");
+});
+
+test("C7-T7 forwardBatch with PP intermediate stage skips sampling", () => {
+  const config = makeConfig({ ppSize: 2 });
+  const engine = new MockEngine(config, config.modelConfig, 0); // ppRank=0 → NOT last stage
+  const batch = new Batch();
+  const req = new Req({ rid: 1, inputIds: [1, 2, 3], samplingParams: new SamplingParams() });
+  batch.reqs.set(1, req);
+  batch.readyIds.push(1);
+  const result = engine.forwardBatch([1, 2, 3], 3, batch);
+  assert.strictEqual(result.isIntermediate, true, "should be intermediate stage");
+  assert.strictEqual(result.sampledIds, null, "sampledIds should be null for intermediate stage");
+  assert.strictEqual(engine.sampler.samplingCounter, 0, "old Sampler should not be used");
+});
+
+// ==========================================
 // 边界条件
 // ==========================================
 console.log("\n--- 边界条件 ---");
