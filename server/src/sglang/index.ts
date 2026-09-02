@@ -51,6 +51,7 @@ export {
   PrefillAdder,
   PrefillManager,
   DecodeManager,
+  SimSchedulerImpl,
   SchedulerIOMixin,
   SimScheduler,
 } from "./scheduler";
@@ -99,9 +100,12 @@ export {
   ParallelMetrics,
   PPPipelineSimulator,
   CPSimulator,
-  CPAttnResult,
   SimMoeBackend,
   EPLBSimulator,
+} from "./parallel";
+
+export type {
+  CPAttnResult,
 } from "./parallel";
 
 export type {
@@ -110,6 +114,9 @@ export type {
   MoeForwardResult,
   EPLBSimulatorOpts,
   RebalanceResult,
+} from "./parallel";
+
+export {
   DPRankState,
   DataParallelController,
   TPSimulator,
@@ -119,6 +126,9 @@ export type {
 // P2b: DP Attention 仿真器
 export {
   DPAttentionSimulator,
+} from "./parallel";
+
+export type {
   DPAttentionSimulatorOpts,
 } from "./parallel";
 // P1b: 并行组合内存预算 + 配置验证
@@ -130,6 +140,16 @@ export {
 } from "./parallel";
 
 export type { PipelineStepResult } from "./parallel";
+
+// P6: ParallelGroups + initParallelGroups
+export type {
+  ParallelGroups,
+  InitParallelGroupsOpts,
+} from "./parallel";
+
+export {
+  initParallelGroups,
+} from "./parallel";
 
 // P0: 仿真指标集合
 export {

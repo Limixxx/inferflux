@@ -33,19 +33,27 @@ export function validateParallelConfig(
 
   // 约束 1：world_size === tp_size × dp_size × pp_size
   const expectedWorldSize = tpSize * dpSize * ppSize;
-  const topo = new ParallelTopology({
-    tpSize,
-    dpSize,
-    epSize,
-    ppSize,
-    cpSize,
-    enableDpAttention: config.enableDpAttention,
-  });
-  const actualWorldSize = topo.worldSize;
-  if (actualWorldSize !== expectedWorldSize || expectedWorldSize < 1) {
-    errors.push(
-      `Constraint 1: world_size (${actualWorldSize}) must equal tp_size (${tpSize}) × dp_size (${dpSize}) × pp_size (${ppSize}) = ${expectedWorldSize} and be >= 1`
-    );
+  let topo: ParallelTopology | null = null;
+  try {
+    topo = new ParallelTopology({
+      tpSize,
+      dpSize,
+      epSize,
+      ppSize,
+      cpSize,
+      enableDpAttention: config.enableDpAttention,
+    });
+  } catch (e) {
+    // ParallelTopology 构造器可能因 cp/ep 约束抛出，收集错误后继续
+    errors.push((e as Error).message);
+  }
+  if (topo) {
+    const actualWorldSize = topo.worldSize;
+    if (actualWorldSize !== expectedWorldSize || expectedWorldSize < 1) {
+      errors.push(
+        `Constraint 1: world_size (${actualWorldSize}) must equal tp_size (${tpSize}) × dp_size (${dpSize}) × pp_size (${ppSize}) = ${expectedWorldSize} and be >= 1`
+      );
+    }
   }
 
   // 约束 2：ep_size >= 1 && (ep_size === 1 || model.isMoe)
@@ -71,7 +79,7 @@ export function validateParallelConfig(
   // 约束 5：pp_size >= 1 && pp_stage_layers 所有阶段层数 >= 1
   if (ppSize < 1) {
     errors.push(`Constraint 5: pp_size (${ppSize}) must be >= 1`);
-  } else {
+  } else if (topo) {
     const stages = topo.ppStageLayers(modelConfig.numLayers);
     const zeroStages = stages.filter(s => s.end - s.start < 1);
     if (zeroStages.length > 0) {
@@ -80,6 +88,11 @@ export function validateParallelConfig(
         `${zeroStages.length} stage(s) have 0 layers`
       );
     }
+  } else if (ppSize > modelConfig.numLayers) {
+    // topology 未创建时手动检查
+    errors.push(
+      `Constraint 5: pp_size (${ppSize}) > numLayers (${modelConfig.numLayers}), some stages may have 0 layers`
+    );
   }
 
   // 约束 6：dp_size >= 1 && (enable_dp_attention → model.useMla)
