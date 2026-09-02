@@ -386,7 +386,6 @@ export class MockEngine {
   // S4 新增属性
   readonly simGraphRunner: SimGraphRunner;
 
-  constructor(config: SimulatorConfig, modelConfig?: ModelConfig, ppRank: number = 0) {
   constructor(
     config: SimulatorConfig,
     modelConfig?: ModelConfig,
@@ -494,28 +493,13 @@ export class MockEngine {
   }
 
   /**
-   * S3+S4: forward_batch — 对齐 §9.11 L3676-3694
-   * S4: 使用 SimGraphRunner 的时间模型替代 S3 简单公式
+   * S3+S4+P6: forward_batch — 对齐 §9.11 L3676-3694
+   * S4: 使用 SimGraphRunner 的时间模型
+   * P6: 统一入口，调用 forwardBatch（含完整并行层循环）
    */
   forward_batch(batch: Batch, sampleArgs: BatchSamplingArgs): ForwardOutput {
     // 1. CUDA Graph 判断（S4: 使用 simGraphRunner）
     const isGraphCapture = this.simGraphRunner.canUseCudaGraph(batch);
-
-    // 2. mock forward
-    let logits: number[][];
-    if (isGraphCapture) {
-      logits = this.simGraphRunner.replay(batch);
-    } else {
-      logits = this._mockModelForward(batch);
-    }
-   * S3+P6: forward_batch — 对齐 §9.11 L3676-3694
-   *
-   * 统一入口：调用 forwardBatch（含完整并行层循环），
-   * 再补充 S3 时间模型和标识字段。
-   */
-  forward_batch(batch: Batch, sampleArgs: BatchSamplingArgs): ForwardOutput {
-    // 1. CUDA Graph 判断
-    const isGraphCapture = this.graphRunner.canUseCudaGraph(batch);
     const isChunkPrefill = [...batch.reqs.values()].some(r => r instanceof ChunkedReq);
 
     // 2. 提取 tokenIds / seqLen 从 batch 中
@@ -536,7 +520,6 @@ export class MockEngine {
 
     // 5. 时间模型（S4: 使用 SimGraphRunner 的时间公式）
     const bs = batch.reqs.size;
-    const isChunkPrefill = [...batch.reqs.values()].some(r => r instanceof ChunkedReq);
     let prefillBatchTime = 0;
     let decodeBatchTime = 0;
     if (batch.extendInputTokens > 0) {
@@ -550,9 +533,6 @@ export class MockEngine {
         decodeBatchTime = this.simGraphRunner.eagerForwardCostTicks(bs, 1);
       }
     }
-    // 5. 补充 S3 时间模型和标识字段
-    const prefillBatchTime = batch.extendInputTokens > 0 ? this._computePrefillTime(batch) : 0;
-    const decodeBatchTime = batch.numDecodeTokens > 0 ? this._computeDecodeTime(batch) : 0;
 
     return {
       ...forwardOutput,
@@ -562,19 +542,6 @@ export class MockEngine {
       isGraphCapture,
       isPpLast: this.isPpLast,
     };
-  }
-
-  /** S3: 计算 prefill 时间 */
-  private _computePrefillTime(batch: Batch): number {
-    return batch.extendInputTokens * this.config.eagerForwardCostTicks;
-  }
-
-  /** S3: 计算 decode 时间 */
-  private _computeDecodeTime(batch: Batch): number {
-    if (this.graphRunner.canUseCudaGraph(batch)) {
-      return batch.numDecodeTokens * this.config.graphReplayCostTicks;
-    }
-    return batch.numDecodeTokens * this.config.eagerForwardCostTicks;
   }
 
   /**

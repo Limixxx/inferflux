@@ -54,6 +54,11 @@ export {
   SimSchedulerImpl,
   SchedulerIOMixin,
   SimScheduler,
+  SimulationClock,
+} from "./scheduler";
+
+export type {
+  SimEvent,
 } from "./scheduler";
 
 // K1: cache 抽象层 + K5 内存预算 + K2 实现 + K3 CacheManager
