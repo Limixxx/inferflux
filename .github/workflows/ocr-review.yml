@@ -114,5 +114,6 @@ jobs:
         env:
           OCR_BASE_REF: ${{ steps.pr-context.outputs.base_ref || github.base_ref }}
           OCR_HEAD_SHA: ${{ steps.pr-context.outputs.head_sha || github.event.pull_request.head.sha }}
+        shell: pwsh
         run: |
-          ocr review --from "$OCR_BASE_REF" --to "$OCR_HEAD_SHA" --format json --audience agent
+          ocr review --from "$env:OCR_BASE_REF" --to "$env:OCR_HEAD_SHA" --format json --audience agent

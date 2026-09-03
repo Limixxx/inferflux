@@ -525,12 +525,15 @@ export class MockEngine {
     if (batch.extendInputTokens > 0) {
       const tokensPerSeq = Math.ceil(batch.extendInputTokens / bs);
       prefillBatchTime = this.simGraphRunner.eagerForwardCostTicks(bs, tokensPerSeq);
+      this.simMetrics.recordEagerForward();
     }
     if (batch.numDecodeTokens > 0) {
       if (isGraphCapture) {
         decodeBatchTime = this.simGraphRunner.graphReplayCostTicks(bs);
+        this.simMetrics.recordCudaGraphReplay();
       } else {
         decodeBatchTime = this.simGraphRunner.eagerForwardCostTicks(bs, 1);
+        this.simMetrics.recordEagerForward();
       }
     }
 

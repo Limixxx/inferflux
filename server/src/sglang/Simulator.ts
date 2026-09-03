@@ -245,6 +245,9 @@ class SgSimInstanceImpl implements SgSimInstance {
       this._workloadIdx++;
     }
 
+    // 重置 lastForwardOutput，确保仅反映当前 tick 的 forward
+    this.scheduler.lastForwardOutput = null;
+
     // 执行调度器 tick
     const replies = this.scheduler.runTick(incoming);
 
@@ -254,12 +257,21 @@ class SgSimInstanceImpl implements SgSimInstance {
       this._trackLatencies(replies, tick);
     }
 
-    // 计算 GPU busy ticks
-    let gpuBusy = 0;
-    if (replies.length > 0) {
-      gpuBusy = 1; // 简化：有响应说明 GPU 在工作
-    }
+    // 计算 GPU busy：使用 ForwardOutput 中的精确时间模型判断本 tick GPU 是否忙碌
+    // 对齐 §9.11：基于 prefillBatchTime + decodeBatchTime 判断（而非粗略的恒为 1）
+    const gpuBusy = this._extractGpuBusy();
     this.metrics.recordTick(tick, gpuBusy);
+  }
+
+  /** 从 scheduler 最近一次 forward 中判断本 tick GPU 是否忙碌（0 或 1） */
+  private _extractGpuBusy(): number {
+    // 通过 scheduler 的内部状态获取当前 tick 的 forward 时间信息
+    const lastForwardOutput = this.scheduler.lastForwardOutput;
+    if (lastForwardOutput === null) return 0;
+    const prefillTime = lastForwardOutput.prefillBatchTime ?? 0;
+    const decodeTime = lastForwardOutput.decodeBatchTime ?? 0;
+    // 精确时间模型：有非零 forward cost 表示 GPU 本 tick 处于忙碌状态
+    return (prefillTime + decodeTime) > 0 ? 1 : 0;
   }
 
   /** 追踪请求延迟 */

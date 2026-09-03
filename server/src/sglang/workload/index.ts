@@ -144,11 +144,8 @@ export class WorkloadGenerator {
       // §9.10: arrivalTick = index / arrivalRate
       return Math.floor(index / config.arrivalRate);
     }
-    // uniform: 均匀分布在 ticks 中
-    if (config.arrivalRate > 0) {
-      return Math.floor(index / config.arrivalRate);
-    }
-    return 0;
+    // uniform: §9.10 中 uniform 分支为 return index（每 tick 1 个请求，按序到达）
+    return index;
   }
 
   /** 生成 token ID 序列（含共享前缀策略，对齐 §9.10） */

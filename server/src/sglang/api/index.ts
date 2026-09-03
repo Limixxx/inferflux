@@ -50,10 +50,10 @@ export class SGHttpApi {
     this._metrics = metrics;
   }
 
-  /** 处理 POST /v1/chat/completions 请求体，返回 OpenAI 格式占位响应 */
-  handleChatCompletions(body: ChatCompletionRequest): ChatCompletionResponse {
+  /** 处理 POST /v1/chat/completions 请求体，返回 OpenAI 格式占位响应或错误 */
+  handleChatCompletions(body: ChatCompletionRequest): ChatCompletionResponse | { error: { message: string; type: string; code: number } } {
     if (!this._scheduler) {
-      throw new Error("SGHttpApi not bound to scheduler");
+      return { error: { message: "SGHttpApi not bound to scheduler", type: "server_error", code: 503 } };
     }
 
     const reqId = this._nextReqId++;
@@ -117,7 +117,7 @@ export class SGHttpApi {
   /** 处理 GET /v1/internal/state，返回调度器状态快照 */
   handleInternalState(): Record<string, unknown> {
     if (!this._scheduler) {
-      return { error: "Scheduler not available" };
+      return { error: { message: "Scheduler not available", type: "server_error", code: 503 } };
     }
 
     const scheduler = this._scheduler;

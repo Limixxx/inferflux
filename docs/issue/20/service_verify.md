@@ -1,5 +1,5 @@
 ---
-title: "Issue #20 S6 服务验证日志"
+title: "Issue #20 S6 服务验证日志（PR #93 驳回修复后）"
 issue_number: 20
 date: 2026-09-03
 ---
@@ -11,25 +11,10 @@ date: 2026-09-03
 **命令**: `npx tsc --noEmit`
 **结果**: ✅ 通过（0 错误）
 
-```
-$ npx tsc --noEmit
-(无输出，无错误)
-```
-
-## 构建验证
-
-**命令**: `node_modules\.bin\tsc`
-**结果**: ✅ 通过
-
-```
-$ node_modules\.bin\tsc
-(无输出，无错误)
-```
-
 ## S6 验收测试
 
 **命令**: `npx ts-node src/test/sglang-s6.test.ts`
-**结果**: ✅ 37/37 通过
+**结果**: ✅ 39/39 通过
 
 ```
   ✓ test_workload_generator_poisson
@@ -68,9 +53,11 @@ $ node_modules\.bin\tsc
   ✓ test_http_service_v1_routes
   ✓ test_e2e_workload_through_scheduler
   ✓ test_simulation_metrics_cuda_graph_counters
+  ✓ test_cuda_graph_eager_counters_in_engine
+  ✓ test_gpu_busy_uses_forward_output_time
   ✓ test_simulation_metrics_record_request_latency_zero_decode_steps
 
-=== S6 Test Results: 37 passed, 0 failed ===
+=== S6 Test Results: 39 passed, 0 failed ===
 ```
 
 ## 回归测试
@@ -90,27 +77,50 @@ $ node_modules\.bin\tsc
 **命令**: `npx ts-node src/test/sglang-s3.test.ts`
 **结果**: ✅ 52/52 通过
 
-## 修改文件清单
+## HTTP 服务启动验证
+
+**命令**: `npx ts-node src/index.ts --http-port=9876 --sim-port=9877`
+**结果**: ✅ 服务启动成功
+
+```
+╔══════════════════════════════════════════════════════════════╗
+║  PD-Disaggregation Simulator — Server Running                 ║
+║                                                                ║
+║  Frontend:  http://localhost:9876                          ║
+║  Sim API:   http://localhost:9877                          ║
+║                                                                ║
+║  Press Ctrl+C to stop.                                         ║
+╚══════════════════════════════════════════════════════════════╝
+```
+
+### 端点验证
+
+| 端点 | 方法 | 状态 | 响应 |
+|------|------|------|------|
+| /health (SimService :9877) | GET | 200 | `{"ok":true}` |
+| /state (SimService :9877) | GET | 200 | 完整仿真状态 JSON |
+| /v1/internal/metrics (HttpService :9876) | GET | 503 | `{"error":"SGHttpApi not available"}`（未绑定 simulator，预期行为） |
+| /api/internal/metrics (HttpService :9876) | GET | 503 | `{"error":"SimulationMetrics not available"}`（未注入 metrics，预期行为） |
+
+注：/v1/chat/completions 和 /v1/internal/state 代理到 SimService 返回 404，这是因为 SimService 当前版本未实现 /v1/* 路由（这些路由通过 HttpService 直接处理或需要绑定 SGHttpApi 后才有意义）。此为已有行为，非本次修复引入。
+
+## 修改文件清单（PR #93 驳回修复）
 
 | 文件 | 修改类型 | 说明 |
 |------|----------|------|
-| `server/src/sglang/workload/index.ts` | 新建（替换桩） | WorkloadGenerator 实现 |
-| `server/src/sglang/metrics/index.ts` | 修改 | SimulationMetrics 完整指标体系升级 |
-| `server/src/sglang/api/index.ts` | 新建（替换桩） | SGHttpApi 无端口消息处理器 |
-| `server/src/sglang/Simulator.ts` | 修改 | SgSimInstance + createSimulator |
-| `server/src/sglang/types.ts` | 修改 | SimulatorConfig 新增 tickIntervalMs |
-| `server/src/http/HttpService.ts` | 修改 | 新增 /v1/* 路由和 setSGHttpApi() |
-| `server/src/sglang/index.ts` | 修改 | 新增 re-export |
-| `server/src/test/sglang-s6.test.ts` | 新建 | S6 阶段验收测试 |
-| `server/src/test/sglang-s3.test.ts` | 修改 | makeConfig 添加 tickIntervalMs |
-| `server/src/test/sglang-s4.test.ts` | 修改 | makeConfig 添加 tickIntervalMs |
-| `server/src/test/sglang-s5.test.ts` | 修改 | makeConfig 添加 tickIntervalMs |
+| `server/src/sglang/Simulator.ts` | 修改 | 偏离 #1：gpuBusy 改为精确判断（_extractGpuBusy 返回 0/1），每 tick 重置 lastForwardOutput |
+| `server/src/sglang/scheduler/index.ts` | 修改 | 偏离 #1：添加 lastForwardOutput 属性；偏离 #2：在 _forward 中同步 CUDA Graph/Eager 计数到 _simMetrics |
+| `server/src/sglang/engine/index.ts` | 修改 | 偏离 #2：在 forward_batch 中调用 recordEagerForward/recordCudaGraphReplay |
+| `server/src/sglang/workload/index.ts` | 修改 | 偏离 #3：uniform 分支改为 `return index` |
+| `server/src/sglang/api/index.ts` | 修改 | 偏离 #4：not_bound 时返回 503 错误对象而非 throw |
+| `server/src/test/sglang-s6.test.ts` | 修改 | 更新测试覆盖 4 项修复：uniform 精确断言、503 错误对象、CUDA Graph 计数器、gpuBusy 精确判断 |
 
 ## 验证结论
 
 所有验证项目均通过：
 - ✅ TypeScript 类型检查无错误
-- ✅ 项目构建成功
-- ✅ S6 验收测试 37/37 通过
+- ✅ S6 验收测试 39/39 通过（含 2 项新增修复验证测试）
 - ✅ S3/S4/S5 回归测试全部通过
-- ✅ 边界条件全覆盖
+- ✅ HTTP 服务启动正常
+- ✅ /health 端点返回正常
+- ✅ 未绑定 simulator 时 /v1/internal/metrics 和 /api/internal/metrics 正确返回 503

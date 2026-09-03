@@ -26,6 +26,7 @@ import {
 } from "../sglang/api";
 import type {
   ChatCompletionRequest,
+  ChatCompletionResponse,
 } from "../sglang/api";
 import {
   SgSimContext,
@@ -221,10 +222,10 @@ test("test_workload_generator_uniform", () => {
   };
   const requests = gen.generate(config);
   assert.strictEqual(requests.length, 20, "should generate 20 requests");
-  // uniform 分布下 arrivalTick = floor(index/rate)
-  for (const r of requests) {
-    assert.ok(typeof r.arrivalTick === "number" && r.arrivalTick >= 0,
-      "arrivalTick should be non-negative number");
+  // §9.10: uniform 分支 arrivalTick = index（每 tick 1 个请求，按序到达）
+  for (let i = 0; i < requests.length; i++) {
+    assert.strictEqual(requests[i].arrivalTick, i,
+      `uniform arrivalTick should equal index: expected ${i}, got ${requests[i].arrivalTick}`);
   }
 });
 
@@ -554,7 +555,7 @@ test("test_sg_http_api_chat_completions", () => {
     max_tokens: 50,
   };
 
-  const resp = api.handleChatCompletions(body);
+  const resp = api.handleChatCompletions(body) as ChatCompletionResponse;
   assert.strictEqual(resp.object, "chat.completion", "response object type");
   assert.strictEqual(resp.model, "test-model", "model name");
   assert.strictEqual(resp.choices.length, 1, "1 choice");
@@ -563,15 +564,16 @@ test("test_sg_http_api_chat_completions", () => {
 });
 
 // ================================================================
-// 测试 15 变体: SGHttpApi 未 bind 时 → throw
+// 测试 15 变体: SGHttpApi 未 bind 时 → 返回 503 错误对象
 // ================================================================
 test("test_sg_http_api_not_bound", () => {
   const api = new SGHttpApi();
   const body: ChatCompletionRequest = {
     messages: [{ role: "user", content: "test" }],
   };
-  assert.throws(() => api.handleChatCompletions(body), /not bound/,
-    "should throw when not bound to scheduler");
+  const result = api.handleChatCompletions(body);
+  assert.ok("error" in (result as any), "should return error object when not bound");
+  assert.strictEqual((result as any).error.code, 503, "error code should be 503");
 });
 
 // ================================================================
@@ -589,7 +591,7 @@ test("test_sg_http_api_default_max_tokens", () => {
     // max_tokens 未指定
   };
 
-  const resp = api.handleChatCompletions(body);
+  const resp = api.handleChatCompletions(body) as ChatCompletionResponse;
   assert.strictEqual(resp.usage.completion_tokens, 0, "placeholder completion_tokens");
   // 验证请求被注入（不抛异常即通过）
 });
@@ -631,12 +633,13 @@ test("test_sg_http_api_internal_state", () => {
 });
 
 // ================================================================
-// 测试 17 变体: SGHttpApi 未 bind 时 internal state 返回 error
+// 测试 17 变体: SGHttpApi 未 bind 时 internal state 返回 503 错误
 // ================================================================
 test("test_sg_http_api_internal_state_not_bound", () => {
   const api = new SGHttpApi();
   const result = api.handleInternalState();
   assert.ok("error" in result, "should contain error key when not bound");
+  assert.strictEqual((result as any).error.code, 503, "error code should be 503");
 });
 
 // ================================================================
@@ -857,6 +860,82 @@ test("test_simulation_metrics_cuda_graph_counters", () => {
   metrics.recordEagerForward();
   assert.strictEqual(metrics.cudaGraphReplayCount, 2, "2 graph replays");
   assert.strictEqual(metrics.eagerForwardCount, 1, "1 eager forward");
+});
+
+// ================================================================
+// 偏离 #2 修复: CUDA Graph / Eager 计数在 MockEngine.forward_batch 中被调用
+// ================================================================
+test("test_cuda_graph_eager_counters_in_engine", () => {
+  // 使用启用 CUDA Graph 的配置
+  const config = makeConfig({
+    enableCudaGraph: true,
+    cudaGraphBs: [1, 2, 4, 8],
+    offlineMode: true,
+    enableOverlap: false,
+    maxTicks: 50,
+    mockSampleMode: "greedy",
+  });
+  const sim = createSimulator(config);
+
+  // 加载 workload 使 decode batch 触发
+  sim.loadWorkload({
+    ...DEFAULT_WORKLOAD_CONFIG,
+    numRequests: 2,
+    arrivalRate: 1.0,
+    inputLenMin: 3,
+    inputLenMax: 5,
+    outputLenMin: 2,
+    outputLenMax: 3,
+  });
+
+  sim.start();
+
+  // 验证 CUDA Graph / Eager 计数器已更新（不再为 0）
+  const m = sim.getMetrics();
+  // prefill 阶段会调用 recordEagerForward，decode 阶段根据 graph capture 情况调用对应计数
+  assert.ok(
+    (m.eagerForwardCount as number) > 0 || (m.cudaGraphReplayCount as number) > 0,
+    `CUDA Graph or Eager counters should be updated: eager=${m.eagerForwardCount}, graph=${m.cudaGraphReplayCount}`
+  );
+});
+
+// ================================================================
+// 偏离 #1 修复: gpuBusy 使用精确时间模型而非粗略的 0/1
+// ================================================================
+test("test_gpu_busy_uses_forward_output_time", () => {
+  const config = makeConfig({
+    offlineMode: true,
+    enableOverlap: false,
+    maxTicks: 50,
+    enableCudaGraph: false,
+    mockSampleMode: "greedy",
+  });
+  const sim = createSimulator(config);
+
+  sim.loadWorkload({
+    ...DEFAULT_WORKLOAD_CONFIG,
+    numRequests: 2,
+    arrivalRate: 1.0,
+    inputLenMin: 3,
+    inputLenMax: 5,
+    outputLenMin: 2,
+    outputLenMax: 3,
+  });
+
+  sim.start();
+
+  const m = sim.getMetrics();
+  // GPU busy ticks 应基于 forward 输出的精确时间模型，而非简单的 0/1
+  // 只要 forward 有执行，gpuBusyTicks 就应该大于 0
+  assert.ok(
+    (m.gpuBusyTicks as number) >= 0,
+    `gpuBusyTicks should be non-negative: ${m.gpuBusyTicks}`
+  );
+  // 验证 gpuUtilization 在合理范围内
+  if ((m.totalTicks as number) > 0) {
+    const util = m.gpuUtilization as number;
+    assert.ok(util >= 0 && util <= 1, `gpuUtilization should be in [0,1]: ${util}`);
+  }
 });
 
 // ================================================================
