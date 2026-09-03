@@ -1,0 +1,19 @@
+{
+  "issue_number": 20,
+  "issue_title": "[SGLang-Sim] S6: WorkloadGenerator + SimulationMetrics + HTTP",
+  "labels": [
+    "enhancement",
+    "sglang-simulator",
+    "sglang-peripheral"
+  ],
+  "branch": "issue-20",
+  "base_branch": "main",
+  "worktree_path": ".worktree\\issue-20",
+  "solution_pr_url": "https://github.com/Limixxx/inferflux/pull/92",
+  "solution_pr_number": 92,
+  "code_pr_url": "https://github.com/Limixxx/inferflux/pull/93",
+  "code_pr_number": 93,
+  "project_item_id": "PVTI_lAHOBeeNX84Bg4hjzg4NOoE",
+  "created_at": "2026-09-02T09:03:42Z",
+  "status": "In progress"
+}

@@ -130,6 +130,7 @@ function makeConfig(overrides?: Partial<SimulatorConfig>): SimulatorConfig {
     maxTicks: null,
     logLevel: "INFO",
     enableMetrics: true,
+    tickIntervalMs: 10,
     ...overrides,
   };
 }

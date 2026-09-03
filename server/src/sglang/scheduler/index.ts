@@ -602,6 +602,7 @@ export class SimScheduler extends SchedulerIOMixin {
   readonly prefillBudget: number;
   readonly overlapEnabled: boolean;
   lastBatch: Batch | null;
+  lastForwardOutput: ForwardOutput | null;
 
   // P6: 并行扩展字段
   private readonly _groups: ParallelGroups | null;
@@ -656,6 +657,7 @@ export class SimScheduler extends SchedulerIOMixin {
     this.prefillBudget = config.maxExtendTokens;
     this.overlapEnabled = config.enableOverlap;
     this.lastBatch = null;
+    this.lastForwardOutput = null;
 
     // S5: Overlap Scheduling 配置
     this._overlapWaitTicks = config.tokenRecvDelayTicks;
@@ -1085,6 +1087,22 @@ export class SimScheduler extends SchedulerIOMixin {
 
     // 2. 调用 forward_batch（内部调用 forwardBatch 含完整并行层循环）
     const forwardOutput = this.engine.forward_batch(batch, sampleArgs);
+    this.lastForwardOutput = forwardOutput;
+
+    // 2b. 同步 CUDA Graph / Eager 计数器到 _simMetrics
+    // （engine 内部的 simMetrics 是独立实例，此处同步到 Simulator 级别）
+    if (this._simMetrics) {
+      if (batch.extendInputTokens > 0) {
+        this._simMetrics.recordEagerForward();
+      }
+      if (batch.numDecodeTokens > 0) {
+        if (forwardOutput.isGraphCapture) {
+          this._simMetrics.recordCudaGraphReplay();
+        } else {
+          this._simMetrics.recordEagerForward();
+        }
+      }
+    }
 
     // 3. 将 next_tokens 写入 tokenPool
     const nextTokens = forwardOutput.nextTokensCpu;
