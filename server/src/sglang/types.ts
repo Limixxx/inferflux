@@ -132,6 +132,9 @@ export interface SimulatorConfig {
   maxTicks: number | null;
   logLevel: string;
   enableMetrics: boolean;
+
+  // ===== S6: 在线模式 tick 间隔（毫秒），仅在线模式生效，默认 10ms =====
+  tickIntervalMs: number;
 }
 
 export const DEFAULT_SIMULATOR_CONFIG: SimulatorConfig = {
@@ -192,6 +195,7 @@ export const DEFAULT_SIMULATOR_CONFIG: SimulatorConfig = {
   maxTicks: null,
   logLevel: "INFO",
   enableMetrics: true,
+  tickIntervalMs: 10,
 };
 
 // 采样参数（S1 升级为 class，S0 的 interface 替换为类型别名）
