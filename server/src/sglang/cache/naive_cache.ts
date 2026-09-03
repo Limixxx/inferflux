@@ -6,7 +6,7 @@ import {
   CacheSizeInfo,
   MatchResult,
   InsertResult,
-} from "./index";
+} from "./base";
 
 /** 无前缀匹配的缓存句柄（§9.3b） */
 export class NaiveCacheHandle extends BaseCacheHandle {

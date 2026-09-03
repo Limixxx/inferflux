@@ -35,11 +35,14 @@ export class HttpService {
   private _simulationMetrics: SimulationMetrics | null = null;
   private _sgHttpApi: SGHttpApi | null = null;
 
-  constructor(port = 8888, rootDir?: string, simPort = 3001) {
+  private readonly defaultHtml: string;
+
+  constructor(port = 8888, rootDir?: string, simPort = 3001, defaultHtml = "/pd-disagg.html") {
     this.port = port;
     // Default root is server/public/ (2 levels up from dist/http/ or src/http/, then "public")
     this.rootDir = rootDir || path.resolve(__dirname, "..", "..", "public");
     this.simPort = simPort;
+    this.defaultHtml = defaultHtml;
     this.server = http.createServer((req, res) => this.handleRequest(req, res));
   }
 
@@ -115,8 +118,8 @@ export class HttpService {
       return;
     }
 
-    // Normalize: strip trailing slash, default to the app entry (pd-disagg.html)
-    if (urlPath === "/" || urlPath === "") urlPath = "/pd-disagg.html";
+    // Normalize: strip trailing slash, default to the app entry
+    if (urlPath === "/" || urlPath === "") urlPath = this.defaultHtml;
 
     const filePath = path.join(this.rootDir, urlPath);
 

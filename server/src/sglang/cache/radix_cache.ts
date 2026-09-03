@@ -6,7 +6,7 @@ import {
   CacheSizeInfo,
   MatchResult,
   InsertResult,
-} from "./index";
+} from "./base";
 import { alignDown } from "../core";
 
 /** 由 token 序列生成 dict key 的函数类型 */

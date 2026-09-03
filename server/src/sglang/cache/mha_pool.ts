@@ -1,7 +1,7 @@
 // mha_pool — K2: MockKVCachePool + PageAllocation (§3.4.2 / §9.3b)
 
 import type { ModelConfig, SimulatorConfig } from "../types";
-import { BaseKVCachePool } from "./index";
+import { BaseKVCachePool } from "./base";
 import { divEven } from "../core";
 
 /** 页分配结果，封装分配的页索引、槽位和总数 */
