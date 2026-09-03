@@ -2,6 +2,7 @@ import http from "http";
 import fs from "fs";
 import path from "path";
 import type { SimulationMetrics } from "../sglang/metrics";
+import type { SGHttpApi } from "../sglang/api";
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -32,6 +33,7 @@ export class HttpService {
   private readonly port: number;
   private readonly simPort: number;
   private _simulationMetrics: SimulationMetrics | null = null;
+  private _sgHttpApi: SGHttpApi | null = null;
 
   constructor(port = 8888, rootDir?: string, simPort = 3001) {
     this.port = port;
@@ -44,6 +46,11 @@ export class HttpService {
   /** 注入 SimulationMetrics 实例，用于 /internal/metrics 端点 */
   setSimulationMetrics(metrics: SimulationMetrics): void {
     this._simulationMetrics = metrics;
+  }
+
+  /** 注入 SGHttpApi 实例，用于 /v1/* 端点 */
+  setSGHttpApi(api: SGHttpApi): void {
+    this._sgHttpApi = api;
   }
 
   /** Start the HTTP server. */
@@ -63,6 +70,33 @@ export class HttpService {
   private handleRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
     const url = new URL(req.url || "/", `http://localhost:${this.port}`);
     let urlPath = decodeURIComponent(url.pathname);
+
+    // S6: /v1/* 路由
+    if (urlPath.startsWith("/v1/")) {
+      // POST /v1/chat/completions — 代理到 SimService
+      if (req.method === "POST" && urlPath === "/v1/chat/completions") {
+        this.proxyToSim("/v1/chat/completions", req, res);
+        return;
+      }
+
+      // GET /v1/internal/metrics — 直接读取 metrics
+      if (req.method === "GET" && urlPath === "/v1/internal/metrics") {
+        if (this._sgHttpApi) {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(this._sgHttpApi.handleInternalMetrics()));
+        } else {
+          res.writeHead(503, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "SGHttpApi not available" }));
+        }
+        return;
+      }
+
+      // GET /v1/internal/state — 代理到 SimService
+      if (req.method === "GET" && urlPath === "/v1/internal/state") {
+        this.proxyToSim("/v1/internal/state", req, res);
+        return;
+      }
+    }
 
     // Proxy /api/* to the SimService
     if (urlPath.startsWith("/api/")) {

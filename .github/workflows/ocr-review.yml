@@ -111,13 +111,8 @@ jobs:
             core.setOutput('head_sha', pullRequest.head.sha);
 
       - name: Run OpenCodeReview
-        uses: alibaba/open-code-review@main
-        with:
-          llm_url: ${{ secrets.OCR_LLM_URL }}
-          llm_auth_token: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
-          llm_model: ${{ vars.OCR_LLM_MODEL }}
-          llm_use_anthropic: ${{ vars.OCR_LLM_USE_ANTHROPIC }}
-          # For issue_comment triggers, pass the resolved refs; for
-          # pull_request_target the action resolves them from the event.
-          base_ref: ${{ steps.pr-context.outputs.base_ref }}
-          head_sha: ${{ steps.pr-context.outputs.head_sha }}
+        env:
+          OCR_BASE_REF: ${{ steps.pr-context.outputs.base_ref || github.base_ref }}
+          OCR_HEAD_SHA: ${{ steps.pr-context.outputs.head_sha || github.event.pull_request.head.sha }}
+        run: |
+          ocr review --from "$OCR_BASE_REF" --to "$OCR_HEAD_SHA" --format json --audience agent

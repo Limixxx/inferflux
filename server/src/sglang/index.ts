@@ -21,7 +21,7 @@ export {
 
 export type { SamplingDtype, SamplingParamsOpts, ForwardInput } from "./types";
 
-export { SgSimContext, Simulator } from "./Simulator";
+export { SgSimContext, Simulator, SgSimInstance, createSimulator } from "./Simulator";
 
 // S1: core 数据结构与工具函数
 export {
@@ -160,6 +160,27 @@ export {
 export {
   SimulationMetrics,
 } from "./metrics";
+
+// S6: WorkloadGenerator
+export {
+  WorkloadGenerator,
+  DEFAULT_WORKLOAD_CONFIG,
+} from "./workload";
+
+export type {
+  WorkloadConfig,
+  SimRequestWithArrival,
+} from "./workload";
+
+// S6: SGHttpApi
+export {
+  SGHttpApi,
+} from "./api";
+
+export type {
+  ChatCompletionRequest,
+  ChatCompletionResponse,
+} from "./api";
 
 // P4: 仿真引擎
 export {
