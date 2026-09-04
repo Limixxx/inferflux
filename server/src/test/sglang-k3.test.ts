@@ -626,12 +626,11 @@ test("T_extra CacheManager is exported as class", () => {
   assert.ok(cm instanceof CacheManager);
 });
 
-test("T_extra CacheManager.constructor rejects radix cacheType", () => {
+test("T_extra CacheManager.constructor supports radix cacheType", () => {
   const pageTable: number[][] = [[]];
-  assert.throws(
-    () => new CacheManager(10, 4, pageTable, "radix"),
-    /RadixPrefixCache not implemented/,
-  );
+  const cm = new CacheManager(10, 4, pageTable, "radix");
+  assert.ok(cm instanceof CacheManager);
+  assert.ok(cm.prefixCache.constructor.name === "RadixPrefixCache");
 });
 
 // Summary
