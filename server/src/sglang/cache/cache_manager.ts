@@ -5,8 +5,8 @@ import {
   BaseCacheHandle,
   MatchResult,
   InsertResult,
-} from "./base";
-import { NaivePrefixCache } from "./naive_cache";
+  NaivePrefixCache,
+} from "./index";
 import { divCeil } from "../core";
 
 /**
