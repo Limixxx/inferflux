@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; base-uri 'self'; form-action 'none'">
+<meta name="viewport" content="width=820, viewport-fit=cover">
+<title>SGLang Simulator · SGLang 并行仿真器</title>
+<style>
+:root{
+  --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --border:#2d3646;
+  --text:#e6edf3; --muted:#8b98a9; --accent:#4ea1ff;
+  --amber:#f0b429; --grey:#7d8590; --blue:#4ea1ff; --green:#3fb950;
+  --purple:#bc8cff; --red:#f85149; --cyan:#39c5cf; --orange:#f0883e;
+  --radius:10px; --sidebar-w:300px;
+}
+*{box-sizing:border-box; margin:0; padding:0;}
+html,body{height:100%;}
+body{
+  background:var(--bg); color:var(--text);
+  font-family:-apple-system,"SF Pro","Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
+  font-size:13px; overflow:hidden;
+}
+button,select,input{font-family:inherit; font-size:12px; color:var(--text);}
+button{
+  background:var(--panel2); border:1px solid var(--border); border-radius:6px;
+  padding:4px 10px; cursor:pointer; white-space:nowrap;
+}
+button:hover{border-color:var(--accent);}
+button.active{background:var(--accent); color:#04121f; border-color:var(--accent); font-weight:600;}
+select{background:var(--panel2); border:1px solid var(--border); border-radius:6px; padding:3px 6px;}
+
+#topbar{
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  padding:8px 12px; border-bottom:1px solid var(--border); background:var(--panel);
+}
+#topbar .title{font-size:15px; font-weight:700; margin-right:6px;}
+#topbar .title small{color:var(--muted); font-weight:400; font-size:11px;}
+#topbar .home{color:var(--muted); font-size:12px; text-decoration:none; margin-right:4px;}
+#topbar .home:hover{color:var(--accent);}
+#topbar .gh-link{display:inline-flex; align-items:center; color:var(--muted); margin-left:auto; transition:color .18s;}
+#topbar .gh-link:hover{color:var(--accent);}
+#topbar .sep{width:1px; height:20px; background:var(--border); margin:0 2px;}
+#speedWrap{display:flex; align-items:center; gap:6px;}
+#speedWrap input[type=range]{width:110px;}
+#speedVal{min-width:44px; color:var(--accent); font-variant-numeric:tabular-nums;}
+#simClock{color:var(--muted); font-variant-numeric:tabular-nums; min-width:88px;}
+#presetWrap{display:flex; gap:6px; align-items:center;}
+#sidebarToggle{display:inline-block;}
+
+#layout{display:flex; height:calc(100% - 45px);}
+#sidebar{
+  width:var(--sidebar-w); min-width:var(--sidebar-w);
+  overflow-y:auto; border-right:1px solid var(--border); background:var(--panel);
+  padding:10px 12px 40px;
+  transition:width .2s ease, min-width .2s ease, padding .2s ease;
+}
+#main{flex:1; min-width:0; display:flex; flex-direction:column; overflow-y:auto; padding:10px;}
+
+.pgroup{margin-bottom:14px;}
+.pgroup h3{
+  font-size:11px; text-transform:uppercase; letter-spacing:.08em;
+  color:var(--muted); border-bottom:1px solid var(--border);
+  padding-bottom:4px; margin-bottom:8px;
+}
+.prow{margin-bottom:9px;}
+.prow .plabel{display:flex; justify-content:space-between; margin-bottom:2px;}
+.prow .plabel .pname{color:var(--text);}
+.prow .plabel .pval{color:var(--accent); font-variant-numeric:tabular-nums;}
+.prow input[type=range]{width:100%; accent-color:var(--accent); height:18px;}
+.prow select{width:100%;}
+.prow input[type=checkbox]{accent-color:var(--accent);}
+
+#flowWrap{position:relative; width:100%;}
+#flow{
+  width:100%; display:block; background:var(--panel);
+  border:1px solid var(--border); border-radius:var(--radius);
+}
+
+#bdWrap{margin-top:10px; background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:8px 12px;}
+#bdWrap h3{font-size:12px; color:var(--muted); margin-bottom:6px;}
+#bd{width:100%; height:86px; display:block;}
+
+#metrics{
+  display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr));
+  gap:8px; margin-top:10px;
+}
+.mcard{
+  background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
+  padding:8px 10px 6px;
+}
+.mcard .mtitle{font-size:11px; color:var(--muted); margin-bottom:2px;}
+.mcard .mval{font-size:18px; font-weight:700; font-variant-numeric:tabular-nums;}
+.mcard .mval small{font-size:10px; color:var(--muted); font-weight:400;}
+.mcard .msub{font-size:10px; color:var(--muted); font-variant-numeric:tabular-nums; margin-bottom:2px; min-height:12px;}
+
+#sidebar.collapsed{
+  width:0; min-width:0; padding-left:0; padding-right:0;
+  border-right:0; overflow:hidden;
+}
+@media (max-width:820px){
+  :root{ --sidebar-w:200px; }
+}
+::-webkit-scrollbar{width:8px; height:8px;}
+::-webkit-scrollbar-thumb{background:var(--border); border-radius:4px;}
+</style>
+</head>
+<body>
+<header id="topbar">
+  <button id="sidebarToggle">&#9776;</button>
+  <div class="title">SGLang 并行仿真器 <small>SGLang Parallel Simulator</small></div>
+  <a class="home" href="/pd-disagg.html">PD分离</a>
+  <div class="sep"></div>
+  <button id="btnPause"></button>
+  <button id="btnStep"></button>
+  <button id="btnReset"></button>
+  <div id="speedWrap">
+    <span data-i18n="ctl.speed"></span>
+    <input type="range" id="speed" min="1" max="20" step="1" value="1">
+    <span id="speedVal">1&times;</span>
+  </div>
+  <span id="simClock">tick = 0</span>
+  <div class="sep"></div>
+  <div id="presetWrap">
+    <span data-i18n="ctl.presets"></span>
+    <button class="preset" data-preset="single"></button>
+    <button class="preset" data-preset="tpOnly"></button>
+    <button class="preset" data-preset="moeEP"></button>
+    <button class="preset" data-preset="pp1f1b"></button>
+    <button class="preset" data-preset="cpLongSeq"></button>
+    <button class="preset" data-preset="fullCombo"></button>
+  </div>
+  <div class="sep"></div>
+  <button id="btnLang">EN</button>
+  <a class="gh-link" href="https://github.com/Limixxx/inferflux" target="_blank" rel="noopener" aria-label="GitHub">
+    <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"></path></svg>
+  </a>
+</header>
+<div id="layout">
+  <aside id="sidebar"><!-- generated --></aside>
+  <main id="main">
+    <div id="flowWrap"><canvas id="flow"></canvas></div>
+    <div id="bdWrap">
+      <h3 data-i18n="bd.title"></h3>
+      <canvas id="bd"></canvas>
+    </div>
+    <section id="metrics"><!-- generated --></section>
+  </main>
+</div>
+
+<script>
+"use strict";
+/* =====================================================================
+ *  SGLang Simulator — API Client Mode
+ *  Connects to SgSimService (port 3002) via HttpService /api/* proxy.
+ * ===================================================================== */
+
+/* ============================ I18N ================================== */
+const DICT = {
+  zh: {
+    "ctl.pause":"⏸ 暂停","ctl.resume":"▶ 继续","ctl.step":"⏭ 单步","ctl.reset":"↺ 重置",
+    "ctl.speed":"步数/次","ctl.presets":"场景:",
+    "preset.single":"单实例","preset.tpOnly":"TP=4","preset.moeEP":"MoE+EP",
+    "preset.pp1f1b":"PP 1F1B","preset.cpLongSeq":"CP 长序列","preset.fullCombo":"全组合",
+    "g.workload":"负载","g.model":"模型","g.parallel":"并行","g.memory":"内存","g.comm":"通信",
+    "p.qps":"QPS","p.arrival":"到达模式","arrival.poisson":"泊松","arrival.uniform":"均匀",
+    "p.inputLenMean":"输入长度均值","p.outputLenMean":"输出长度均值","p.cacheHitRate":"Cache 命中率",
+    "p.modelPreset":"模型预设","model.llama8b":"Llama-8B","model.deepseekv3":"DeepSeek-V3 MLA+MoE","model.custom":"自定义",
+    "p.tpSize":"TP Size","p.dpSize":"DP Size","p.epSize":"EP Size","p.ppSize":"PP Size","p.cpSize":"CP Size",
+    "p.dpLoadBalanceStrategy":"DP 负载均衡策略","strategy.round_robin":"轮询","strategy.shortest_queue":"最短队列",
+    "p.ppPipelineSchedule":"PP 调度","schedule.1f1b":"1F1B","schedule.gpipe":"GPipe","schedule.interleaved":"交错",
+    "p.moeRoutingMode":"MoE 路由模式","routing.mock":"Mock","routing.hash":"Hash","routing.simulated":"Simulated",
+    "p.enableOverlap":"Overlap Scheduling","p.enableCudaGraph":"CUDA Graph","p.enableEplb":"EPLB","p.enableDpAttention":"DP Attention",
+    "p.totalGpuMemory":"总显存 (GB)","p.memoryRatio":"显存利用率","p.pageSize":"Page Size","p.cacheType":"Cache 类型",
+    "cache.radix":"Radix","cache.naive":"Naive",
+    "p.networkBandwidthGBps":"网络带宽 (GB/s)","p.networkLatencyUs":"网络延迟 (µs)",
+    "p.tpEfficiency":"TP 效率","p.epEfficiency":"EP 效率","p.cpEfficiency":"CP 效率",
+    "bd.title":"Tick 时间分解 — Prefill / Decode / 通信开销堆叠",
+    "bd.prefill":"Prefill","bd.decode":"Decode","bd.tp":"TP 通信","bd.ep":"EP 通信",
+    "bd.pp":"PP 通信","bd.cp":"CP 通信","bd.ppBubble":"PP Bubble",
+    "m.rps":"吞吐 (req/s)","m.tps":"Token 吞吐 (tok/s)","m.ttft":"TTFT","m.tbt":"TBT",
+    "m.e2e":"E2E 延迟","m.gpuUtil":"GPU 利用率","m.graphReplay":"CUDA Graph Replay",
+    "m.cacheHit":"Cache 命中率","m.commTotal":"并行通信总开销 (ticks)",
+    "m.tpComm":"TP 通信","m.dpAttnComm":"DP-Attn 通信","m.epComm":"EP 通信",
+    "m.ppComm":"PP 通信","m.cpComm":"CP 通信",
+  },
+  en: {
+    "ctl.pause":"⏸ Pause","ctl.resume":"▶ Resume","ctl.step":"⏭ Step","ctl.reset":"↺ Reset",
+    "ctl.speed":"Steps/call","ctl.presets":"Presets:",
+    "preset.single":"Single","preset.tpOnly":"TP=4","preset.moeEP":"MoE+EP",
+    "preset.pp1f1b":"PP 1F1B","preset.cpLongSeq":"CP Long Seq","preset.fullCombo":"Full Combo",
+    "g.workload":"Workload","g.model":"Model","g.parallel":"Parallel","g.memory":"Memory","g.comm":"Comm",
+    "p.qps":"QPS","p.arrival":"Arrival","arrival.poisson":"Poisson","arrival.uniform":"Uniform",
+    "p.inputLenMean":"Input len mean","p.outputLenMean":"Output len mean","p.cacheHitRate":"Cache hit rate",
+    "p.modelPreset":"Model preset","model.llama8b":"Llama-8B","model.deepseekv3":"DeepSeek-V3 MLA+MoE","model.custom":"Custom",
+    "p.tpSize":"TP Size","p.dpSize":"DP Size","p.epSize":"EP Size","p.ppSize":"PP Size","p.cpSize":"CP Size",
+    "p.dpLoadBalanceStrategy":"DP load balance","strategy.round_robin":"Round-robin","strategy.shortest_queue":"Shortest queue",
+    "p.ppPipelineSchedule":"PP schedule","schedule.1f1b":"1F1B","schedule.gpipe":"GPipe","schedule.interleaved":"Interleaved",
+    "p.moeRoutingMode":"MoE routing","routing.mock":"Mock","routing.hash":"Hash","routing.simulated":"Simulated",
+    "p.enableOverlap":"Overlap Scheduling","p.enableCudaGraph":"CUDA Graph","p.enableEplb":"EPLB","p.enableDpAttention":"DP Attention",
+    "p.totalGpuMemory":"Total GPU memory (GB)","p.memoryRatio":"Memory ratio","p.pageSize":"Page size","p.cacheType":"Cache type",
+    "cache.radix":"Radix","cache.naive":"Naive",
+    "p.networkBandwidthGBps":"Bandwidth (GB/s)","p.networkLatencyUs":"Latency (µs)",
+    "p.tpEfficiency":"TP efficiency","p.epEfficiency":"EP efficiency","p.cpEfficiency":"CP efficiency",
+    "bd.title":"Tick time breakdown — Prefill / Decode / communication overhead stacked",
+    "bd.prefill":"Prefill","bd.decode":"Decode","bd.tp":"TP comm","bd.ep":"EP comm",
+    "bd.pp":"PP comm","bd.cp":"CP comm","bd.ppBubble":"PP bubble",
+    "m.rps":"Throughput (req/s)","m.tps":"Token throughput (tok/s)","m.ttft":"TTFT","m.tbt":"TBT",
+    "m.e2e":"E2E latency","m.gpuUtil":"GPU utilization","m.graphReplay":"CUDA Graph replay",
+    "m.cacheHit":"Cache hit rate","m.commTotal":"Parallel comm total (ticks)",
+    "m.tpComm":"TP comm","m.dpAttnComm":"DP-Attn comm","m.epComm":"EP comm",
+    "m.ppComm":"PP comm","m.cpComm":"CP comm",
+  },
+};
+let LANG = "en";
+if (typeof navigator !== "undefined" && (navigator.language || "").toLowerCase().startsWith("zh")) LANG = "zh";
+function t(k){ return DICT[LANG][k] !== undefined ? DICT[LANG][k] : k; }
+
+/* ============================ State ================================ */
+let state = { tickCounter:0, paused:true, config:{}, scheduler:{}, metrics:{}, parallel:{} };
+
+/* ============================ Params ================================ */
+const PARAM_GROUPS = [
+  { key:"g.workload", params:[
+    { key:"qps", type:"range", min:1, max:64, step:1, field:null },
+    { key:"p.arrival", type:"select", opts:[["poisson","arrival.poisson"],["uniform","arrival.uniform"]], field:null },
+    { key:"p.inputLenMean", type:"range", min:16, max:4096, step:16, field:null },
+    { key:"p.outputLenMean", type:"range", min:16, max:4096, step:16, field:null },
+    { key:"p.cacheHitRate", type:"range", min:0, max:1, step:0.05, field:null },
+  ]},
+  { key:"g.model", params:[
+    { key:"p.modelPreset", type:"select", opts:[["llama8b","model.llama8b"],["deepseekv3","model.deepseekv3"],["custom","model.custom"]], field:null },
+  ]},
+  { key:"g.parallel", params:[
+    { key:"p.tpSize", type:"range", min:1, max:8, step:1, field:"tpSize" },
+    { key:"p.dpSize", type:"range", min:1, max:8, step:1, field:"dpSize" },
+    { key:"p.epSize", type:"range", min:1, max:8, step:1, field:"epSize" },
+    { key:"p.ppSize", type:"range", min:1, max:8, step:1, field:"ppSize" },
+    { key:"p.cpSize", type:"range", min:1, max:8, step:1, field:"cpSize" },
+    { key:"p.dpLoadBalanceStrategy", type:"select", opts:[["round_robin","strategy.round_robin"],["shortest_queue","strategy.shortest_queue"]], field:"dpLoadBalanceStrategy" },
+    { key:"p.ppPipelineSchedule", type:"select", opts:[["1f1b","schedule.1f1b"],["gpipe","schedule.gpipe"],["interleaved","schedule.interleaved"]], field:"ppPipelineSchedule" },
+    { key:"p.moeRoutingMode", type:"select", opts:[["mock","routing.mock"],["hash","routing.hash"],["simulated","routing.simulated"]], field:"moeRoutingMode" },
+    { key:"p.enableOverlap", type:"check", field:"enableOverlap" },
+    { key:"p.enableCudaGraph", type:"check", field:"enableCudaGraph" },
+    { key:"p.enableEplb", type:"check", field:"enableEplb" },
+    { key:"p.enableDpAttention", type:"check", field:"enableDpAttention" },
+  ]},
+  { key:"g.memory", params:[
+    { key:"p.totalGpuMemory", type:"range", min:16, max:288, step:16, field:"totalGpuMemory", transform: v => v*1024**3, inverse: v => v/(1024**3) },
+    { key:"p.memoryRatio", type:"range", min:0.5, max:0.99, step:0.01, field:"memoryRatio" },
+    { key:"p.pageSize", type:"range", min:1, max:64, step:1, field:"pageSize" },
+    { key:"p.cacheType", type:"select", opts:[["radix","cache.radix"],["naive","cache.naive"]], field:"cacheType" },
+  ]},
+  { key:"g.comm", params:[
+    { key:"p.networkBandwidthGBps", type:"range", min:10, max:800, step:10, field:"networkBandwidthGBps" },
+    { key:"p.networkLatencyUs", type:"range", min:1, max:100, step:1, field:"networkLatencyUs" },
+    { key:"p.tpEfficiency", type:"range", min:0.5, max:1.0, step:0.01, field:"tpEfficiency" },
+    { key:"p.epEfficiency", type:"range", min:0.5, max:1.0, step:0.01, field:"epEfficiency" },
+    { key:"p.cpEfficiency", type:"range", min:0.5, max:1.0, step:0.01, field:"cpEfficiency" },
+  ]},
+];
+
+/* ============================ Sidebar ================================ */
+function buildSidebar(){
+  const sb = document.getElementById("sidebar");
+  sb.innerHTML = "";
+  for(const g of PARAM_GROUPS){
+    const div = document.createElement("div"); div.className="pgroup";
+    const h3 = document.createElement("h3"); h3.textContent=t(g.key); div.appendChild(h3);
+    for(const p of g.params){
+      const row = document.createElement("div"); row.className="prow";
+      const label = document.createElement("div"); label.className="plabel";
+      const nm = document.createElement("span"); nm.className="pname"; nm.textContent=t(p.key);
+      const vl = document.createElement("span"); vl.className="pval"; vl.id="pv-"+p.key;
+      label.appendChild(nm); label.appendChild(vl); row.appendChild(label);
+      if(p.type==="range"){
+        const inp = document.createElement("input"); inp.type="range";
+        inp.min=p.min; inp.max=p.max; inp.step=p.step; inp.id="pi-"+p.key;
+        inp.addEventListener("input", onParamChange);
+        row.appendChild(inp);
+      } else if(p.type==="select"){
+        const sel = document.createElement("select"); sel.id="pi-"+p.key;
+        for(const [val,lbl] of p.opts){
+          const o = document.createElement("option"); o.value=val; o.textContent=t(lbl); sel.appendChild(o);
+        }
+        sel.addEventListener("change", onParamChange);
+        row.appendChild(sel);
+      } else if(p.type==="check"){
+        const inp = document.createElement("input"); inp.type="checkbox"; inp.id="pi-"+p.key;
+        inp.addEventListener("change", onParamChange);
+        row.appendChild(inp);
+      }
+      div.appendChild(row);
+    }
+    sb.appendChild(div);
+  }
+}
+
+function onParamChange(){
+  const params = {};
+  for(const g of PARAM_GROUPS){
+    for(const p of g.params){
+      if(!p.field) continue;
+      const el = document.getElementById("pi-"+p.key);
+      if(!el) continue;
+      let v;
+      if(p.type==="check") v = el.checked;
+      else if(p.type==="range") v = parseFloat(el.value);
+      else v = el.value;
+      if(p.transform) v = p.transform(v);
+      params[p.field] = v;
+    }
+  }
+  apiPost("/params", { params }).then(r=>{ if(r) state=r; });
+}
+
+function syncSidebar(){
+  const c = state.config || {};
+  for(const g of PARAM_GROUPS){
+    for(const p of g.params){
+      const el = document.getElementById("pi-"+p.key);
+      const vl = document.getElementById("pv-"+p.key);
+      if(!el) continue;
+      if(p.field && c[p.field] !== undefined){
+        let raw = c[p.field];
+        if(p.inverse) raw = p.inverse(raw);
+        if(p.type==="check") el.checked = !!raw;
+        else if(p.type==="range"){ el.value=raw; if(vl) vl.textContent=raw; }
+        else el.value=raw;
+      }
+      if(p.type==="range" && vl) vl.textContent = el.value;
+    }
+  }
+}
+
+/* ============================ API ================================ */
+async function apiGet(path){
+  try{ const r=await fetch("/api"+path); return await r.json(); }
+  catch(e){ console.warn("API GET",path,e); return null; }
+}
+async function apiPost(path,body){
+  try{ const r=await fetch("/api"+path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}); return await r.json(); }
+  catch(e){ console.warn("API POST",path,e); return null; }
+}
+
+/* ============================ Canvas: Rank Topology ================================ */
+function drawTopology(){
+  const canvas = document.getElementById("flow");
+  const par = canvas.parentElement;
+  canvas.width = par.clientWidth; canvas.height = 260;
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0,0,W,H);
+
+  const p = state.parallel || {};
+  const tp = p.tpSize||1, dp = p.dpSize||1, pp = p.ppSize||1;
+  const cols = tp, rows = dp * pp;
+  const cellW = Math.min(80, (W-40)/cols);
+  const cellH = Math.min(44, (H-60)/rows);
+  const ox = (W - cols*cellW)/2, oy = (H - rows*cellH)/2;
+
+  ctx.fillStyle = "var(--muted)"; ctx.font="11px sans-serif"; ctx.textAlign="center";
+  ctx.fillText(`Rank Topology: tp=${tp} × dp=${dp} × pp=${pp}  (world_size=${tp*dp*pp})`, W/2, 18);
+
+  const dpRankLoad = p.dpRankLoad || [];
+  const epExpertLoad = p.epExpertLoad || [];
+
+  for(let r=0; r<rows; r++){
+    for(let c=0; c<cols; c++){
+      const rank = r*cols+c;
+      const x = ox + c*cellW + 2, y = oy + r*cellH + 2;
+      const w = cellW-4, h = cellH-4;
+
+      // Color by DP load if available
+      let intensity = 0.15;
+      if(dpRankLoad[r] !== undefined && dpRankLoad[r] > 0){
+        intensity = Math.min(1, 0.15 + dpRankLoad[r]*0.6);
+      }
+      ctx.fillStyle = `rgba(78,161,255,${intensity})`;
+      ctx.beginPath(); ctx.roundRect(x,y,w,h,4); ctx.fill();
+      ctx.strokeStyle = "var(--border)"; ctx.lineWidth=1; ctx.stroke();
+
+      ctx.fillStyle = "var(--text)"; ctx.font="10px sans-serif"; ctx.textAlign="center";
+      ctx.fillText(`R${rank}`, x+w/2, y+h/2-4);
+      ctx.fillStyle = "var(--muted)"; ctx.font="8px sans-serif";
+      const dpIdx = Math.floor(r / pp);
+      const ppIdx = r % pp;
+      ctx.fillText(`dp${dpIdx} pp${ppIdx}`, x+w/2, y+h/2+8);
+    }
+  }
+}
+
+/* ============================ Canvas: Breakdown ================================ */
+function drawBreakdown(){
+  const canvas = document.getElementById("bd");
+  canvas.width = canvas.parentElement.clientWidth - 24; canvas.height = 86;
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0,0,W,H);
+
+  const m = state.metrics || {};
+  const p = state.parallel || {};
+  const totalTicks = m.totalTicks || 1;
+  const segments = [
+    { label:t("bd.prefill"), value: m.prefillBatches||0, color:"#4ea1ff" },
+    { label:t("bd.decode"), value: m.decodeBatches||0, color:"#3fb950" },
+    { label:t("bd.tp"), value: p.tpCommTicks||0, color:"#f0b429" },
+    { label:t("bd.ep"), value: p.epCommTicks||0, color:"#bc8cff" },
+    { label:t("bd.pp"), value: p.ppSendRecvTicks||0, color:"#f0883e" },
+    { label:t("bd.cp"), value: p.cpCommTicks||0, color:"#39c5cf" },
+    { label:t("bd.ppBubble"), value: p.ppBubbleTicks||0, color:"#f85149" },
+  ];
+  const total = segments.reduce((s,sg)=>s+sg.value,0) || 1;
+  let x = 0;
+  for(const sg of segments){
+    const w = (sg.value/total)*W;
+    ctx.fillStyle = sg.color;
+    ctx.fillRect(x,0,w,H);
+    if(w > 30){
+      ctx.fillStyle="#fff"; ctx.font="10px sans-serif"; ctx.textAlign="center";
+      ctx.fillText(sg.label, x+w/2, H/2+3);
+    }
+    x += w;
+  }
+}
+
+/* ============================ Metrics Cards ================================ */
+function buildMetrics(){
+  const sec = document.getElementById("metrics");
+  const cards = [
+    { key:"m.rps", val: ()=> fmtNum(state.metrics.completedRequests / Math.max(1,(state.metrics.totalTicks||1)) * 1000) },
+    { key:"m.tps", val: ()=> fmtNum(state.metrics.totalTokensGenerated) },
+    { key:"m.ttft", val: ()=> fmtArr(state.metrics.prefillLatencies) },
+    { key:"m.tbt", val: ()=> fmtArr(state.metrics.decodeLatencies) },
+    { key:"m.e2e", val: ()=> fmtArr(state.metrics.requestLatencies) },
+    { key:"m.gpuUtil", val: ()=> (state.metrics.gpuUtilization*100).toFixed(1)+"%" },
+    { key:"m.graphReplay", val: ()=> state.metrics.cudaGraphReplayCount||0 },
+    { key:"m.cacheHit", val: ()=> ((state.metrics.cacheHitRate||0)*100).toFixed(1)+"%" },
+    { key:"m.commTotal", val: ()=> fmtNum(state.parallel.commTicksTotal||0), sub:()=>commSub() },
+    { key:"m.tpComm", val: ()=> fmtNum(state.parallel.tpCommTicks||0) },
+    { key:"m.dpAttnComm", val: ()=> fmtNum(state.parallel.dpAttnCommTicks||0) },
+    { key:"m.epComm", val: ()=> fmtNum(state.parallel.epCommTicks||0) },
+    { key:"m.ppComm", val: ()=> fmtNum(state.parallel.ppSendRecvTicks||0) },
+    { key:"m.cpComm", val: ()=> fmtNum(state.parallel.cpCommTicks||0) },
+  ];
+  sec.innerHTML = "";
+  for(const c of cards){
+    const d = document.createElement("div"); d.className="mcard";
+    const tt = document.createElement("div"); tt.className="mtitle"; tt.textContent=t(c.key);
+    const vv = document.createElement("div"); vv.className="mval"; vv.id="mc-"+c.key;
+    d.appendChild(tt); d.appendChild(vv);
+    if(c.sub){
+      const sb = document.createElement("div"); sb.className="msub"; sb.id="ms-"+c.key;
+      d.appendChild(sb);
+    }
+    sec.appendChild(d);
+  }
+}
+
+function updateMetrics(){
+  const cards = [
+    { key:"m.rps", val: ()=> fmtNum(state.metrics.completedRequests / Math.max(1,(state.metrics.totalTicks||1)) * 1000) },
+    { key:"m.tps", val: ()=> fmtNum(state.metrics.totalTokensGenerated) },
+    { key:"m.ttft", val: ()=> fmtArr(state.metrics.prefillLatencies) },
+    { key:"m.tbt", val: ()=> fmtArr(state.metrics.decodeLatencies) },
+    { key:"m.e2e", val: ()=> fmtArr(state.metrics.requestLatencies) },
+    { key:"m.gpuUtil", val: ()=> ((state.metrics.gpuUtilization||0)*100).toFixed(1)+"%" },
+    { key:"m.graphReplay", val: ()=> state.metrics.cudaGraphReplayCount||0 },
+    { key:"m.cacheHit", val: ()=> ((state.metrics.cacheHitRate||0)*100).toFixed(1)+"%" },
+    { key:"m.commTotal", val: ()=> fmtNum(state.parallel.commTicksTotal||0) },
+    { key:"m.tpComm", val: ()=> fmtNum(state.parallel.tpCommTicks||0) },
+    { key:"m.dpAttnComm", val: ()=> fmtNum(state.parallel.dpAttnCommTicks||0) },
+    { key:"m.epComm", val: ()=> fmtNum(state.parallel.epCommTicks||0) },
+    { key:"m.ppComm", val: ()=> fmtNum(state.parallel.ppSendRecvTicks||0) },
+    { key:"m.cpComm", val: ()=> fmtNum(state.parallel.cpCommTicks||0) },
+  ];
+  for(const c of cards){
+    const el = document.getElementById("mc-"+c.key);
+    if(el) el.textContent = c.val();
+  }
+  const sub = document.getElementById("ms-m.commTotal");
+  if(sub) sub.textContent = commSub();
+}
+
+function commSub(){
+  const p = state.parallel||{};
+  return `TP:${p.tpCommTicks||0} DP:${p.dpAttnCommTicks||0} EP:${p.epCommTicks||0} PP:${p.ppSendRecvTicks||0} CP:${p.cpCommTicks||0}`;
+}
+
+function fmtNum(n){ return n == null ? "0" : typeof n==="number" ? (n>999 ? n.toFixed(0) : n.toFixed(2)) : String(n); }
+function fmtArr(arr){
+  if(!arr || !arr.length) return "-";
+  const avg = arr.reduce((a,b)=>a+b,0)/arr.length;
+  return avg.toFixed(1) + " ticks";
+}
+
+/* ============================ Controls ================================ */
+let paused = true;
+function initControls(){
+  const btnPause = document.getElementById("btnPause");
+  const btnStep = document.getElementById("btnStep");
+  const btnReset = document.getElementById("btnReset");
+  const btnLang = document.getElementById("btnLang");
+  const sidebarToggle = document.getElementById("sidebarToggle");
+  const speedEl = document.getElementById("speed");
+
+  btnPause.textContent = t("ctl.pause");
+  btnPause.addEventListener("click", ()=>{
+    paused = !paused;
+    btnPause.textContent = paused ? t("ctl.resume") : t("ctl.pause");
+    apiPost("/command", { action: paused ? "pause" : "start" });
+  });
+  btnStep.textContent = t("ctl.step");
+  btnStep.addEventListener("click", ()=>{
+    const steps = parseInt(speedEl.value)||1;
+    apiPost("/command", { action:"step", dt:steps });
+  });
+  btnReset.textContent = t("ctl.reset");
+  btnReset.addEventListener("click", ()=>{
+    apiPost("/command", { action:"reset" }).then(r=>{ if(r) state=r; paused=true; btnPause.textContent=t("ctl.resume"); });
+  });
+  btnLang.textContent = LANG==="zh"?"EN":"中";
+  btnLang.addEventListener("click", ()=>{
+    LANG = LANG==="zh"?"en":"zh";
+    btnLang.textContent = LANG==="zh"?"EN":"中";
+    buildSidebar(); buildMetrics(); initPresets();
+    document.getElementById("btnPause").textContent = paused ? t("ctl.resume") : t("ctl.pause");
+    document.getElementById("btnStep").textContent = t("ctl.step");
+    document.getElementById("btnReset").textContent = t("ctl.reset");
+  });
+  sidebarToggle.addEventListener("click", ()=>{
+    document.getElementById("sidebar").classList.toggle("collapsed");
+  });
+  speedEl.addEventListener("input", ()=>{
+    document.getElementById("speedVal").textContent = speedEl.value+"×";
+  });
+  initPresets();
+}
+
+function initPresets(){
+  document.querySelectorAll(".preset").forEach(btn=>{
+    const key = btn.dataset.preset;
+    btn.textContent = t("preset."+key);
+    btn.onclick = ()=> apiPost("/preset",{preset:key}).then(r=>{ if(r) state=r; syncSidebar(); });
+  });
+}
+
+/* ============================ Poll ================================ */
+async function poll(){
+  const s = await apiGet("/state");
+  if(s){
+    state = s;
+    document.getElementById("simClock").textContent = `tick = ${s.tickCounter||0}`;
+    updateMetrics();
+    syncSidebar();
+    drawTopology();
+    drawBreakdown();
+  }
+}
+
+/* ============================ Init ================================ */
+function init(){
+  buildSidebar();
+  buildMetrics();
+  initControls();
+  poll();
+  setInterval(poll, 500);
+}
+
+init();
+</script>
+</body>
+</html>
