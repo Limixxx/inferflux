@@ -7,15 +7,7 @@ test_result: pass
 
 # Issue #7 测试报告
 
-## 驳回意见修复验证
-
-| # | 驳回问题 | 修复措施 | 结果 |
-|---|---------|---------|------|
-| 1 | cache 模块重构未在 PR body 中声明（与"零代码改动"矛盾） | 回滚 cache 模块重构，恢复 cache/index.ts 为原始版本（包含类定义），删除 cache/base.ts，恢复 4 个文件的 import 路径 | ✅ pass |
-
 ## 验收测试结果
-
-### §3 演示系统验收测试（sglang-service.test.ts）
 
 | 用例编号 | 测试描述 | 结果 |
 |----------|---------|------|
@@ -38,33 +30,42 @@ test_result: pass
 | B-step-no-start | step works without prior start | ✅ pass |
 | B-step-no-start-a | tickCounter incremented | ✅ pass |
 
-**小计: 18 通过 / 0 失败**
-
-### 一致性回归测试（22 个 sglang-*.test.ts + verify-metrics-http.test.ts）
-
-| 测试文件 | 通过 | 失败 | 测试文件 | 通过 | 失败 |
-|---------|------|------|---------|------|------|
-| sglang-s0 | 22 | 0 | sglang-p0 | 37 | 0 |
-| sglang-s1 | 26 | 0 | sglang-p1a | 25 | 0 |
-| sglang-s2 | 48 | 0 | sglang-p1b | 32 | 0 |
-| sglang-s3 | 52 | 0 | sglang-p2a | 24 | 0 |
-| sglang-s4 | 46 | 0 | sglang-p2b | 16 | 0 |
-| sglang-s5 | 23 | 0 | sglang-p3a | 37 | 0 |
-| sglang-s6 | 39 | 0 | sglang-p3b | 25 | 0 |
-| sglang-k1 | 23 | 0 | sglang-pp | 39 | 0 |
-| sglang-k2 | 31 | 0 | sglang-p5 | 23 | 0 |
-| sglang-k3 | 35 | 0 | sglang-p6 | 45 | 0 |
-| sglang-k4 | 41 | 0 | verify-metrics-http | ALL PASS | 0 |
-| sglang-k5 | 20 | 0 | | | |
-
-**回归测试合计: 638+ 通过 / 0 失败**
-
 ## 类型检查
+- 结果: pass (tsc --noEmit, exit code 0, no errors)
 
-- 结果: ✅ pass（`npx tsc --noEmit` 无错误）
+## 回归测试结果
 
-## 边界条件覆盖
+| 测试文件 | 通过 | 失败 |
+|----------|------|------|
+| sglang-s0 | 22 | 0 |
+| sglang-s1 | 26 | 0 |
+| sglang-s2 | 48 | 0 |
+| sglang-s3 | 运行通过 | 0 |
+| sglang-s4 | 运行通过 | 0 |
+| sglang-s5 | 运行通过 | 0 |
+| sglang-s6 | 39 | 0 |
+| sglang-k1 | 23 | 0 |
+| sglang-k2 | 31 | 0 |
+| sglang-k3 | 35 | 0 |
+| sglang-k4 | 41 | 0 |
+| sglang-k5 | 20 | 0 |
+| sglang-p0 | 37 | 0 |
+| sglang-p1a | 25 | 0 |
+| sglang-p1b | 32 | 0 |
+| sglang-p2a | 24 | 0 |
+| sglang-p2b | 16 | 0 |
+| sglang-p3a | 37 | 0 |
+| sglang-p3b | 25 | 0 |
+| sglang-pp | 39 | 0 |
+| sglang-p5 | 23 | 0 |
+| sglang-p6 | 45 | 0 |
+| sglang-service | 18 | 0 |
+| verify-metrics-http | 运行通过 | 0 |
+| **合计** | **549+** | **0** |
 
-- 全并行维度 = 1（single 预设）: rank 网格 1×1×1，通信成本全 0 ✅
-- 仿真未 start 直接 step: 离线单步正常工作 ✅
-- 并行配置非法（epSize=2 + isMoe=false）: 返回 400 + 错误明细 ✅
+## Bug 修复
+
+修复了 `CacheManager` 中 `cacheType === "radix"` 时抛出 "not implemented" 错误的 bug：
+- **根因**：`cache_manager.ts` 第 59-60 行，当 `cacheType === "radix"` 时直接 throw，未使用已实现的 `RadixPrefixCache`
+- **修复**：将 `throw` 替换为 `this.prefixCache = new RadixPrefixCache(numPages, pageSize)`
+- **同步更新**：`sglang-k3.test.ts` 中 `T_extra` 测试从"期望抛异常"改为"验证 radix 构造成功"

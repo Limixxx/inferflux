@@ -6,6 +6,7 @@ import {
   MatchResult,
   InsertResult,
   NaivePrefixCache,
+  RadixPrefixCache,
 } from "./index";
 import { divCeil } from "../core";
 
@@ -57,7 +58,7 @@ export class CacheManager {
     this._allocatedPages = 0;
 
     if (cacheType === "radix") {
-      throw new Error("RadixPrefixCache not implemented yet (K4)");
+      this.prefixCache = new RadixPrefixCache(numPages, pageSize);
     } else {
       this.prefixCache = new NaivePrefixCache(numPages, pageSize);
     }
